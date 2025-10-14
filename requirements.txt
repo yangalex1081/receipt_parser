@@ -1,0 +1,7 @@
+transformers
+torch
+Pillow
+timm
+sentencepiece
+accelerate
+modal
