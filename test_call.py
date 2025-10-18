@@ -1,10 +1,10 @@
 import modal
 
-fn = modal.Function.from_name("example-get-started","square")
+fn = modal.Function.from_name("receipt-parsing-functions","test_hello")
 
 
-
+print('test')
 # Call remote function with bytes
-result = fn.remote(5)
-
+result = fn.remote()
+print('test2')
 print(result)

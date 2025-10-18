@@ -18,7 +18,7 @@ MODEL_NAME = "debu-das/donut_receipt_v1.20"
 def setup():
 
     # Load the pretrained Donut model
-    processor = DonutProcessor.from_pretrained(MODEL_NAME)
+    processor = DonutProcessor.from_pretrained(MODEL_NAME, use_fast = True)
     model = VisionEncoderDecoderModel.from_pretrained(MODEL_NAME)
 
     # Tell the model what to run on 
@@ -79,23 +79,24 @@ def transcript_receipt(image_bytes: bytes)-> dict:
     Uses Donut to read through receipt bytes and return structured JSON data
     """
 
-    # Get the processor and model from the setup() function
-    processor, model, device = setup()
-
     # Load the bytes into a PIL image
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
+    # Get the processor and model from the setup() function
+    processor, model, device = setup()
+
+    # prepare encoder inputs
+    pixel_values = processor(image, return_tensors="pt").pixel_values
+
     # Prep the prompt
     task_prompt = "<s_cord-v2>" #CORD (Consolidated Receipt Dataset)
-    pixel_values = processor(image, return_tensors="pt").pixel_values
-    decoder_input_ids = processor.tokenizer(task_prompt, add_special_tokens= False , return_tensors= "pt" ).input_ids
+    decoder_input_ids = processor.tokenizer(task_prompt, add_special_tokens=False, return_tensors="pt").input_ids
 
-    # Actually use the model to find text
+    # generate answer
     outputs = model.generate(
         pixel_values.to(device),
         decoder_input_ids=decoder_input_ids.to(device),
         max_length=model.decoder.config.max_position_embeddings,
-        early_stopping=True,
         pad_token_id=processor.tokenizer.pad_token_id,
         eos_token_id=processor.tokenizer.eos_token_id,
         use_cache=True,
@@ -117,3 +118,8 @@ def transcript_receipt(image_bytes: bytes)-> dict:
 @app.function()
 def test_square(x: int):
     return x ** 2
+
+@app.function()
+def test_hello():
+    print("hello world")
+    return
