@@ -1,9 +1,11 @@
+# This file creates and runs the functions to actually transcript a receipt via Modal
+
 import modal
 from PIL import Image, ImageEnhance
-import io
+import io, re
 import torch
 from transformers import DonutProcessor, VisionEncoderDecoderModel
-import re
+from functools import lru_cache
 
 # Modal App and Docker Image
 app = modal.App('receipt-parsing-functions')
@@ -15,8 +17,18 @@ inference_image = modal.Image.debian_slim(python_version="3.12").pip_install_fro
 # Declare the model name, no need to add a revision so HuggingFace always gives the latest model
 MODEL_NAME = "debu-das/donut_receipt_v1.20"
 
-def setup():
+# Declare the prompt DONUT should use
+PROMPT = (
+    "<s_cord-v2> "
+    "Return a JSON object with exactly these keys: "
+    "{store, date, total, items}. "
+    "The 'items' field must be an array of objects with keys {name, price, quantity}. "
+    "Do not include extra text or explanations. <s_answer>"
+)
 
+
+@lru_cache(maxsize=1)
+def setup():
     # Load the pretrained Donut model
     processor = DonutProcessor.from_pretrained(MODEL_NAME, use_fast = True)
     model = VisionEncoderDecoderModel.from_pretrained(MODEL_NAME)
@@ -32,7 +44,8 @@ model_cache = modal.Volume.from_name("hf-hub-cache", create_if_missing=True)
 
 MODEL_CACHE_PATH = "/root/models"
 inference_image = inference_image.env(
-    {"HF_HUB_CACHE": MODEL_CACHE_PATH, "HF_HUB_ENABLE_HF_TRANSFER": "1"}
+    {"HF_HUB_CACHE": MODEL_CACHE_PATH,
+     "HF_HUB_ENABLE_HF_TRANSFER": "0"}
 )
 
 # Func to preprocess receipt
@@ -67,32 +80,34 @@ def preprocess_image(image_bytes: bytes) -> bytes:
     image.save(buf, format="PNG")
     return buf.getvalue()
 
-# Func 2 to read receipt using Donut
 @app.function(
     image=inference_image, 
     gpu="any",
     retries=3,
     volumes={MODEL_CACHE_PATH: model_cache}
 )
-def transcript_receipt(image_bytes: bytes)-> dict:
+def transcript_receipt(image_bytes: bytes):
     """
-    Uses Donut to read through receipt bytes and return structured JSON data
+    Function to transcript a receipt and return the contents in JSON
     """
 
-    # Load the bytes into a PIL image
-    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-    # Get the processor and model from the setup() function
+    # Load model and processor
     processor, model, device = setup()
 
-    # prepare encoder inputs
+    # Load PIL image from bytes
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+
+    # Prepare encoder inputs
     pixel_values = processor(image, return_tensors="pt").pixel_values
 
-    # Prep the prompt
-    task_prompt = "<s_cord-v2>" #CORD (Consolidated Receipt Dataset)
-    decoder_input_ids = processor.tokenizer(task_prompt, add_special_tokens=False, return_tensors="pt").input_ids
+    # Prepare decoder inputs
+    task_prompt = PROMPT
+    decoder_input_ids = processor.tokenizer(
+        task_prompt, add_special_tokens=False, return_tensors="pt"
+    ).input_ids
 
-    # generate answer
+    # Generate answer
     outputs = model.generate(
         pixel_values.to(device),
         decoder_input_ids=decoder_input_ids.to(device),
@@ -105,21 +120,59 @@ def transcript_receipt(image_bytes: bytes)-> dict:
         return_dict_in_generate=True,
     )
 
-    # postprocess
+    # Postprocess
     sequence = processor.batch_decode(outputs.sequences)[0]
-    sequence = sequence.replace(processor.tokenizer.eos_token, "").replace(processor.tokenizer.pad_token, "")
+    sequence = sequence.replace(processor.tokenizer.eos_token, "").replace(
+        processor.tokenizer.pad_token, ""
+    )
     sequence = re.sub(r"<.*?>", "", sequence, count=1).strip()  # remove first task start token
-        
-    # Convert to JSON
-    output_json = processor.token2json(sequence)
 
-    return output_json
+    return processor.token2json(sequence)
 
-@app.function()
-def test_square(x: int):
-    return x ** 2
+@app.function(image=inference_image)
+def normalize_output(raw_json: dict) -> dict:
+    """
+    Normalize and clean Donut JSON output for consistency.
+    """
+    def clean_price(value):
+        if isinstance(value, str):
+            value = re.sub(r"[^\d.]", "", value)
+            return float(value) if value else None
+        return value
 
-@app.function()
-def test_hello():
-    print("hello world")
-    return
+    return {
+        "store": raw_json.get("store_name", "").strip().title(),
+        "date": raw_json.get("date", "").replace("/", "-"),
+        "total": clean_price(raw_json.get("total")),
+        "items": [
+            {
+                "name": i.get("name", "").title(),
+                "price": clean_price(i.get("price")),
+                "qty": int(i.get("quantity", 1))
+            }
+            for i in raw_json.get("items", [])
+        ]
+    }
+
+
+@app.function(image=inference_image)
+def get_status():
+    gpu = torch.cuda.is_available()
+    return {
+        "status": "ready",
+        "gpu": gpu,
+        "device": "cuda" if gpu else "cpu",
+        "model": MODEL_NAME
+    }
+
+@app.function(
+    image=inference_image, 
+    gpu="any",
+    retries=3,
+    volumes={MODEL_CACHE_PATH: model_cache}
+)
+def process_receipt(image_bytes: bytes):
+    preprocessed = preprocess_image.local(image_bytes)
+    raw = transcript_receipt.local(preprocessed)
+    normalized = normalize_output.local(raw)
+    return normalized
