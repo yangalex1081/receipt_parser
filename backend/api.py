@@ -18,16 +18,6 @@ ALLOWED_ORIGINS = [
 
 # Get API key from Modal secrets
 API_KEY = os.environ.get("RECEIPT_API_KEY")
-AUTH_HEADER = "authorization"
-auth_header = request.headers.get(AUTH_HEADER)
-
-if not auth_header or not auth_header.startswith("Bearer "):
-    raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
-
-key = auth_header.split("Bearer ")[-1]
-if key != API_KEY:
-    raise HTTPException(status_code=401, detail="Unauthorized")
-
 
 # Add CORS
 web_app.add_middleware(
@@ -37,16 +27,21 @@ web_app.add_middleware(
     allow_headers=["*"],
 )
 
-# Add API key auth
+# Add Bearer token auth
 @web_app.middleware("http")
-async def verify_api_key(request: Request, call_next):
+async def verify_bearer_token(request: Request, call_next):
     # Skip health check
     if request.url.path == "/health":
         return await call_next(request)
 
-    key = request.headers.get(API_KEY_HEADER)
+    auth_header = request.headers.get("authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+
+    key = auth_header.split("Bearer ")[-1]
     if key != API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
+
     return await call_next(request)
 
 # Health check
