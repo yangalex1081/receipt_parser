@@ -1,11 +1,10 @@
-# This file creates and runs the functions to actually transcript a receipt via Modal
-
 import modal
 from PIL import Image, ImageEnhance
-import io, re
+import io, re, os
 import torch
 from transformers import DonutProcessor, VisionEncoderDecoderModel
 from functools import lru_cache
+from modal import Secret
 
 # Modal App and Docker Image
 app = modal.App('receipt-parsing-functions')
@@ -26,6 +25,15 @@ PROMPT = (
     "Do not include extra text or explanations. <s_answer>"
 )
 
+# API key added via Modal secret
+SECRET_NAME = "RECEIPT_PARSER_SECRET"
+API_KEY_ENV = "RECEIPT_API_KEY"
+
+def verify_internal_key(provided_key: str):
+    """Ensure only authorized callers can use these functions"""
+    expected_key = os.environ.get(API_KEY_ENV)
+    if provided_key != expected_key:
+        raise PermissionError("Unauthorized: Invalid internal API key.")
 
 @lru_cache(maxsize=1)
 def setup():
@@ -84,13 +92,12 @@ def preprocess_image(image_bytes: bytes) -> bytes:
     image=inference_image, 
     gpu="any",
     retries=3,
-    volumes={MODEL_CACHE_PATH: model_cache}
+    volumes={MODEL_CACHE_PATH: model_cache},
+    secrets=[Secret.from_name(SECRET_NAME)]
 )
-def transcript_receipt(image_bytes: bytes):
-    """
-    Function to transcript a receipt and return the contents in JSON
-    """
-
+def transcript_receipt(image_bytes: bytes, api_key: str):
+    """Function to transcript a receipt and return the contents in JSON"""
+    verify_internal_key(api_key)
 
     # Load model and processor
     processor, model, device = setup()
@@ -154,7 +161,6 @@ def normalize_output(raw_json: dict) -> dict:
         ]
     }
 
-
 @app.function(image=inference_image)
 def get_status():
     gpu = torch.cuda.is_available()
@@ -169,10 +175,14 @@ def get_status():
     image=inference_image, 
     gpu="any",
     retries=3,
-    volumes={MODEL_CACHE_PATH: model_cache}
+    volumes={MODEL_CACHE_PATH: model_cache},
+    secrets=[Secret.from_name(SECRET_NAME)]
 )
-def process_receipt(image_bytes: bytes):
+def process_receipt(image_bytes: bytes, api_key: str):
+    """Full pipeline: preprocess -> transcript -> normalize"""
+    verify_internal_key(api_key)
+
     preprocessed = preprocess_image.local(image_bytes)
-    raw = transcript_receipt.local(preprocessed)
+    raw = transcript_receipt.local(preprocessed, api_key)
     normalized = normalize_output.local(raw)
     return normalized

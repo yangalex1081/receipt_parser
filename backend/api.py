@@ -1,47 +1,87 @@
+import os
 import fastapi
-import modal
+from fastapi import Request, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+import modal
 
+# Create Modal app
 app = modal.App("receipt-parser-api")
-web_app = fastapi.FastAPI(title="Receipt Parser API")
 
-# Allow calls from Vercel domain
+# Create FastAPI app
+web_app = fastapi.FastAPI()
+
+# Allowed origins (frontend)
+ALLOWED_ORIGINS = [
+    "https://receipt-parser.vercel.app",  # production
+    "http://localhost:3000",              # local dev
+]
+
+# Get API key from Modal secrets
+API_KEY = os.environ.get("RECEIPT_API_KEY")
+AUTH_HEADER = "authorization"
+auth_header = request.headers.get(AUTH_HEADER)
+
+if not auth_header or not auth_header.startswith("Bearer "):
+    raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+
+key = auth_header.split("Bearer ")[-1]
+if key != API_KEY:
+    raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+# Add CORS
 web_app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # or ["https://receipt-parser.vercel.app"]
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-parse_receipt = modal.Function.from_name("receipt-parsing-functions", "process_receipt")
+# Add API key auth
+@web_app.middleware("http")
+async def verify_api_key(request: Request, call_next):
+    # Skip health check
+    if request.url.path == "/health":
+        return await call_next(request)
 
-@web_app.post("/parse")
-async def parse(request: fastapi.Request):
-    """
-    Function to queue receipt to parse
-    """
-    form = await request.form()
-    file = await form["receipt"].read()
-    call = parse_receipt.spawn(file)
-    return {"call_id": call.object_id}
+    key = request.headers.get(API_KEY_HEADER)
+    if key != API_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return await call_next(request)
 
-@web_app.get("/result/{call_id}")
-async def poll_results(call_id: str):
-    """
-    Function to poll modal to see if receipt has finished parsing
-    """
-    function_call = modal.functions.FunctionCall.from_id(call_id)
-    try:
-        result = function_call.get(timeout=0)
-    except TimeoutError:
-        return fastapi.responses.JSONResponse(content="", status_code=202)
-    return result
-
+# Health check
 @web_app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "message": "Receipt Parser API healthy"}
 
-@app.function()
+# Status check (basically same as health)
+@web_app.get("/status")
+async def get_status():
+    fn = modal.Function.from_name("receipt-parsing-functions", "get_status")
+    return fn.remote()
+
+# Main endpoint to process receipt
+@web_app.post("/parse")
+async def parse_receipt(file: UploadFile = File(...)):
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Invalid file type")
+
+    # Read bytes
+    image_bytes = await file.read()
+
+    # Get Modal function
+    process_fn = modal.Function.from_name("receipt-parsing-functions", "process_receipt")
+
+    # Call function with secret key
+    result = process_fn.remote(image_bytes, api_key=API_KEY)
+    return result
+
+# Modal deployment config
+image = modal.Image.debian_slim(python_version="3.12").pip_install_from_requirements(
+    "requirements.txt"
+)
+
+@app.function(image=image, secrets=[modal.Secret.from_name("RECEIPT_PARSER_SECRET")])
 @modal.asgi_app()
 def fastapi_app():
     return web_app
