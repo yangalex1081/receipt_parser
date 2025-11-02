@@ -1,0 +1,72 @@
+# =========================================================
+# 🧱 FRONTEND (Vite / React)
+# =========================================================
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Log files
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Lock files
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# Vite / Netlify
+.netlify/
+.vercel/
+.DS_Store
+
+# =========================================================
+# 🐍 BACKEND (Python / Modal)
+# =========================================================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+.venv/
+venv/
+env/
+*.egg-info/
+.repylog.txt
+modal.toml
+
+# =========================================================
+# 🧩 ENVIRONMENT & CONFIG
+# =========================================================
+.env
+.env.*
+*.secret
+*.pem
+*.key
+*.crt
+*.db
+*.sqlite3
+
+# =========================================================
+# 🧠 IDE / EDITOR
+# =========================================================
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.iml
+
+# =========================================================
+# 🧰 MISC / SYSTEM
+# =========================================================
+.DS_Store
+Thumbs.db

@@ -38,6 +38,7 @@ psutil==7.1.0
 pydantic==2.12.3
 pydantic_core==2.41.4
 Pygments==2.19.2
+python-multipart==0.0.20
 PyYAML==6.0.3
 regex==2025.9.18
 requests==2.32.5
