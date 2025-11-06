@@ -1,5 +1,5 @@
 import modal
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, ImageOps, ImageFilter
 import io, re, os
 import torch
 from transformers import DonutProcessor, VisionEncoderDecoderModel
@@ -57,36 +57,48 @@ inference_image = inference_image.env(
 )
 
 # Func to preprocess receipt
-@app.function(image = inference_image)
+@app.function(image=inference_image)
 def preprocess_image(image_bytes: bytes) -> bytes:
     """
-    Takes the raw bytes of an image and then:
-        grayscales
-        boosts contrast
-        resizes
-    to output RGB bytes
+    Light preprocessing for receipts:
+        - auto-orient using EXIF
+        - mild brightness/contrast adjustment
+        - resize (preserve aspect ratio, limit to 1280px)
+        - convert to RGB
     """
+    from PIL import ImageOps, ImageEnhance, ImageStat, ImageFilter
+    import io
 
-    # Grayscale
-    image = Image.open(io.BytesIO(image_bytes)).convert("L")  
+    image = Image.open(io.BytesIO(image_bytes))
+    image = ImageOps.exif_transpose(image)  # auto-orient (fix sideways receipts)
 
-    # Increase contrast
-    enhancer = ImageEnhance.Contrast(image)
-    image = enhancer.enhance(2.0)
+    # Ensure RGB
+    if image.mode != "RGB":
+        image = image.convert("RGB")
 
-    # Resize if needed (max 1024 pixels on long side)
-    max_size = 1024
-    ratio = min(max_size / image.size[0], max_size / image.size[1])
-    new_size = tuple(int(x * ratio) for x in image.size)
-    image = image.resize(new_size)
+    # Adjust brightness and contrast gently
+    stat = ImageStat.Stat(image)
+    avg_brightness = sum(stat.mean) / len(stat.mean)
+    if avg_brightness < 100:
+        image = ImageEnhance.Brightness(image).enhance(1.2)
+    image = ImageEnhance.Contrast(image).enhance(1.1)
 
-    # Donut expects RGB
-    image = image.convert("RGB")
+    # Slight unsharp mask for clarity (optional)
+    image = image.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
 
-    # Save to bytes to pass between Modal functions
+    # Resize if too large (keep aspect ratio)
+    max_size = 1280
+    if max(image.size) > max_size:
+        ratio = max_size / max(image.size)
+        new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
+        image = image.resize(new_size, Image.Resampling.LANCZOS)
+
+    # Save to bytes
     buf = io.BytesIO()
-    image.save(buf, format="PNG")
+    image.save(buf, format="PNG", optimize=True)
     return buf.getvalue()
+
+
 
 @app.function(
     image=inference_image, 
@@ -137,10 +149,17 @@ def transcript_receipt(image_bytes: bytes, api_key: str):
     return processor.token2json(sequence)
 
 @app.function(image=inference_image)
-def normalize_output(raw_json: dict) -> dict:
+def normalize_output(raw_json):
     """
     Normalize and clean Donut JSON output for consistency.
     """
+    # Handle case where Donut returns a list
+    if isinstance(raw_json, list):
+        if len(raw_json) > 0 and isinstance(raw_json[0], dict):
+            raw_json = raw_json[0]
+        else:
+            return {"error": "Invalid model output format"}
+
     def clean_price(value):
         if isinstance(value, str):
             value = re.sub(r"[^\d.]", "", value)
@@ -148,7 +167,7 @@ def normalize_output(raw_json: dict) -> dict:
         return value
 
     return {
-        "store": raw_json.get("store_name", "").strip().title(),
+        "store": raw_json.get("store", "").strip().title(),
         "date": raw_json.get("date", "").replace("/", "-"),
         "total": clean_price(raw_json.get("total")),
         "items": [
@@ -160,6 +179,7 @@ def normalize_output(raw_json: dict) -> dict:
             for i in raw_json.get("items", [])
         ]
     }
+
 
 @app.function(image=inference_image)
 def get_status():
@@ -183,6 +203,6 @@ def process_receipt(image_bytes: bytes, api_key: str):
     verify_internal_key(api_key)
 
     preprocessed = preprocess_image.local(image_bytes)
-    raw = transcript_receipt.local(preprocessed, api_key)
+    raw = transcript_receipt.local(image_bytes, api_key)
     normalized = normalize_output.local(raw)
-    return normalized
+    return raw

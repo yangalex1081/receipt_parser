@@ -51,10 +51,10 @@ def test_transcript_receipt():
     print(result)
 
 def test_donut():
-    fn = modal.Function.from_name(APP_NAME, "test_donut")
+    fn = modal.Function.from_name(APP_NAME, "process_receipt")
     with open("test_photos/image.jpg", "rb") as f:
         image_bytes = f.read()
-    result = fn.remote(image_bytes)
+    result = fn.remote(image_bytes, "4012089e-e5c3-498b-84b3-3dded81bd1c6")
     print("✅ test_donut result:")
     print(result)
 

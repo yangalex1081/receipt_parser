@@ -23,6 +23,7 @@ API_KEY = os.environ.get("RECEIPT_API_KEY")
 web_app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -30,8 +31,8 @@ web_app.add_middleware(
 # Add Bearer token auth
 @web_app.middleware("http")
 async def verify_bearer_token(request: Request, call_next):
-    # Skip health check
-    if request.url.path == "/health":
+    # Skip preflights and health checks
+    if request.method == "OPTIONS" or request.url.path == "/health":
         return await call_next(request)
 
     auth_header = request.headers.get("authorization")
@@ -54,6 +55,10 @@ async def health():
 async def get_status():
     fn = modal.Function.from_name("receipt-parsing-functions", "get_status")
     return fn.remote()
+
+@web_app.options("/parse")
+async def options_parse():
+    return fastapi.responses.Response(status_code=200)
 
 # Main endpoint to process receipt
 @web_app.post("/parse")

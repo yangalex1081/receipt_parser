@@ -1,11 +1,47 @@
+import React, { useState, useEffect } from "react";
 import UploadForm from "./components/UploadForm";
+import ReceiptTable from "./components/ReceiptTable";
+import HealthCheck from "./components/HealthCheck";
+import UploadFake from "./components/UploadFake";
 
-function App() {
+const App = () => {
+  const [parsedData, setParsedData] = useState({
+    store: "",
+    date: "",
+    total: 0,
+    items: [],
+  });
+
   return (
     <div>
-      <UploadForm />
+      <div style={{ flex: 1, padding: "20px" }}>
+        <HealthCheck />
+      </div>
+      <div style={{ display: "flex", height: "100vh" }}>
+        {/* Left side — Upload and controls */}
+        <div style={{ flex: 1, padding: "20px" }}>
+          <h1>🧾 Receipt Parser</h1>
+          <UploadForm onParsed={setParsedData} />
+        </div>
+        <div>
+          <UploadFake onParsed={setParsedData} />
+        </div>
+
+        {/* Right side — Table always visible */}
+        <div
+          style={{
+            width: "50%",
+            borderLeft: "1px solid #ccc",
+            padding: "20px",
+            overflowY: "auto",
+            background: "#fafafa",
+          }}
+        >
+          <ReceiptTable parsedData={parsedData} onChange={setParsedData} />
+        </div>
+      </div>
     </div>
   );
-}
+};
 
 export default App;
