@@ -17,13 +17,40 @@ inference_image = modal.Image.debian_slim(python_version="3.12").pip_install_fro
 MODEL_NAME = "debu-das/donut_receipt_v1.20"
 
 # Declare the prompt DONUT should use
-PROMPT = (
-    "<s_cord-v2> "
-    "Return a JSON object with exactly these keys: "
-    "{store, date, total, items}. "
-    "The 'items' field must be an array of objects with keys {name, price, quantity}. "
-    "Do not include extra text or explanations. <s_answer>"
-)
+PROMPT = """<s_cord-v2>
+You are extracting structured data from a receipt image.
+Return the result as a clean JSON object with exactly these keys: {store, date, total, items}.
+Each item in 'items' must be an object with keys {name, qty, price}.
+Do NOT include extra text, labels, or explanations.
+
+Example 1:
+{
+    "store": "Target",
+    "date": "2023-08-02",
+    "total": 23.45,
+    "items": [
+        {"name": "Milk", "qty": 1, "price": 3.29},
+        {"name": "Bread", "qty": 2, "price": 4.98},
+        {"name": "Cereal", "qty": 1, "price": 5.19}
+    ]
+}
+
+Example 2:
+{
+    "store": "Walmart Supercenter",
+    "date": "2024-12-18",
+    "total": 42.69,
+    "items": [
+        {"name": "Apples", "qty": 3, "price": 5.99},
+        {"name": "Bananas", "qty": 2, "price": 3.49},
+        {"name": "Toothpaste", "qty": 1, "price": 4.99},
+        {"name": "Soda", "qty": 6, "price": 14.22}
+    ]
+}
+
+Now extract the information for this receipt and return only the JSON result:
+<s_answer>"""
+
 
 # API key added via Modal secret
 SECRET_NAME = "RECEIPT_PARSER_SECRET"
