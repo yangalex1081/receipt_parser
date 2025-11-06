@@ -87,42 +87,41 @@ inference_image = inference_image.env(
 @app.function(image=inference_image)
 def preprocess_image(image_bytes: bytes) -> bytes:
     """
-    Light preprocessing for receipts:
-        - auto-orient using EXIF
-        - mild brightness/contrast adjustment
-        - resize (preserve aspect ratio, limit to 1280px)
-        - convert to RGB
+    Preprocess receipt images:
+      - Converts to grayscale
+      - Auto-enhances contrast
+      - Light denoising
+      - Resizes carefully
+      - Returns RGB bytes for Donut
     """
-    from PIL import ImageOps, ImageEnhance, ImageStat, ImageFilter
-    import io
 
-    image = Image.open(io.BytesIO(image_bytes))
-    image = ImageOps.exif_transpose(image)  # auto-orient (fix sideways receipts)
+    # Load image and convert to grayscale
+    image = Image.open(io.BytesIO(image_bytes)).convert("L")
+    img_np = np.array(image)
 
-    # Ensure RGB
-    if image.mode != "RGB":
-        image = image.convert("RGB")
+    # --- Step 1: Adaptive histogram equalization (CLAHE) for smart contrast ---
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+    img_np = clahe.apply(img_np)
 
-    # Adjust brightness and contrast gently
-    stat = ImageStat.Stat(image)
-    avg_brightness = sum(stat.mean) / len(stat.mean)
-    if avg_brightness < 100:
-        image = ImageEnhance.Brightness(image).enhance(1.2)
-    image = ImageEnhance.Contrast(image).enhance(1.1)
+    # --- Step 2: Light denoising ---
+    img_np = cv2.fastNlMeansDenoising(img_np, None, 10, 7, 21)
 
-    # Slight unsharp mask for clarity (optional)
-    image = image.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
+    # --- Step 3: Resize carefully ---
+    max_side = 1365
+    h, w = img_np.shape
+    scale = min(max_side / max(w, h), 1.0)  # never upscale
+    if scale < 1.0:
+        img_np = cv2.resize(img_np, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
 
-    # Resize if too large (keep aspect ratio)
-    max_size = 1280
-    if max(image.size) > max_size:
-        ratio = max_size / max(image.size)
-        new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
-        image = image.resize(new_size, Image.Resampling.LANCZOS)
+    # --- Step 4: Convert back to RGB for Donut ---
+    image = Image.fromarray(img_np).convert("RGB")
 
-    # Save to bytes
+    # --- Step 5: Optional sharpening for clarity ---
+    image = image.filter(ImageFilter.UnsharpMask(radius=1, percent=150, threshold=1))
+
+    # --- Step 6: Save to bytes ---
     buf = io.BytesIO()
-    image.save(buf, format="PNG", optimize=True)
+    image.save(buf, format="PNG")
     return buf.getvalue()
 
 
