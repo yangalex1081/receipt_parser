@@ -5,51 +5,53 @@ import torch
 from transformers import DonutProcessor, VisionEncoderDecoderModel
 from functools import lru_cache
 from modal import Secret
+import numpy as np
+import cv2
 
 # Modal App and Docker Image
 app = modal.App('receipt-parsing-functions')
 
-inference_image = modal.Image.debian_slim(python_version="3.12").pip_install_from_requirements(
-    'requirements.txt'
+inference_image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .apt_install("libgl1", "libglib2.0-0")
+    .pip_install_from_requirements('requirements.txt')
 )
-
 # Declare the model name, no need to add a revision so HuggingFace always gives the latest model
-MODEL_NAME = "debu-das/donut_receipt_v1.20"
+MODEL_NAME = "naver-clova-ix/donut-base-finetuned-cord-v2"
 
 # Declare the prompt DONUT should use
 PROMPT = """<s_cord-v2>
-You are extracting structured data from a receipt image.
-Return the result as a clean JSON object with exactly these keys: {store, date, total, items}.
-Each item in 'items' must be an object with keys {name, qty, price}.
-Do NOT include extra text, labels, or explanations.
+You are reading a receipt and must extract the purchased items.
 
-Example 1:
+Return the result as a JSON object with a single key "menu".
+Each element in "menu" must have:
+- "nm" for the item name,
+- "cnt" for the quantity,
+- "price" for the item price.
+
+Do not include store name, date, total, or extra explanations.
+
+### Example 1
 {
-    "store": "Target",
-    "date": "2023-08-02",
-    "total": 23.45,
-    "items": [
-        {"name": "Milk", "qty": 1, "price": 3.29},
-        {"name": "Bread", "qty": 2, "price": 4.98},
-        {"name": "Cereal", "qty": 1, "price": 5.19}
-    ]
+  "menu": [
+    {"nm": "ICE BLACKCOFFEE", "cnt": "2", "price": "5000"},
+    {"nm": "LATTE", "cnt": "1", "price": "4500"},
+    {"nm": "MUFFIN", "cnt": "3", "price": "9000"}
+  ]
 }
 
-Example 2:
+### Example 2
 {
-    "store": "Walmart Supercenter",
-    "date": "2024-12-18",
-    "total": 42.69,
-    "items": [
-        {"name": "Apples", "qty": 3, "price": 5.99},
-        {"name": "Bananas", "qty": 2, "price": 3.49},
-        {"name": "Toothpaste", "qty": 1, "price": 4.99},
-        {"name": "Soda", "qty": 6, "price": 14.22}
-    ]
+  "menu": [
+    {"nm": "NASI GORENG", "cnt": "1", "price": "42000"},
+    {"nm": "ICED TEA", "cnt": "2", "price": "12000"},
+    {"nm": "CHICKEN SATAY", "cnt": "1", "price": "38000"}
+  ]
 }
 
-Now extract the information for this receipt and return only the JSON result:
+Now extract and return only the JSON result for this receipt:
 <s_answer>"""
+
 
 
 # API key added via Modal secret
@@ -87,39 +89,30 @@ inference_image = inference_image.env(
 @app.function(image=inference_image)
 def preprocess_image(image_bytes: bytes) -> bytes:
     """
-    Preprocess receipt images:
-      - Converts to grayscale
-      - Auto-enhances contrast
-      - Light denoising
-      - Resizes carefully
-      - Returns RGB bytes for Donut
+    Light, Donut-friendly preprocessing:
+      - Keep RGB
+      - Optional gentle contrast stretch
+      - Resize (preserve aspect ratio)
+      - Mild sharpening
     """
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-    # Load image and convert to grayscale
-    image = Image.open(io.BytesIO(image_bytes)).convert("L")
-    img_np = np.array(image)
+    # 1️⃣ Gentle contrast — 1.2x instead of 2.0x
+    enhancer = ImageEnhance.Contrast(image)
+    image = enhancer.enhance(1.8)
 
-    # --- Step 1: Adaptive histogram equalization (CLAHE) for smart contrast ---
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
-    img_np = clahe.apply(img_np)
-
-    # --- Step 2: Light denoising ---
-    img_np = cv2.fastNlMeansDenoising(img_np, None, 10, 7, 21)
-
-    # --- Step 3: Resize carefully ---
-    max_side = 1365
-    h, w = img_np.shape
-    scale = min(max_side / max(w, h), 1.0)  # never upscale
+    # 2️⃣ Resize — ensure longest side ≤ 1280px
+    max_size = 1280
+    w, h = image.size
+    scale = min(max_size / max(w, h), 1.0)
     if scale < 1.0:
-        img_np = cv2.resize(img_np, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+        new_size = (int(w * scale), int(h * scale))
+        image = image.resize(new_size, Image.Resampling.LANCZOS)
 
-    # --- Step 4: Convert back to RGB for Donut ---
-    image = Image.fromarray(img_np).convert("RGB")
+    # 3️⃣ Mild sharpening — avoids over-edge artifacts
+    image = image.filter(ImageFilter.UnsharpMask(radius=0.8, percent=100, threshold=3))
 
-    # --- Step 5: Optional sharpening for clarity ---
-    image = image.filter(ImageFilter.UnsharpMask(radius=1, percent=150, threshold=1))
-
-    # --- Step 6: Save to bytes ---
+    # Save
     buf = io.BytesIO()
     image.save(buf, format="PNG")
     return buf.getvalue()
@@ -177,34 +170,107 @@ def transcript_receipt(image_bytes: bytes, api_key: str):
 @app.function(image=inference_image)
 def normalize_output(raw_json):
     """
-    Normalize and clean Donut JSON output for consistency.
-    """
-    # Handle case where Donut returns a list
-    if isinstance(raw_json, list):
-        if len(raw_json) > 0 and isinstance(raw_json[0], dict):
-            raw_json = raw_json[0]
-        else:
-            return {"error": "Invalid model output format"}
-
-    def clean_price(value):
-        if isinstance(value, str):
-            value = re.sub(r"[^\d.]", "", value)
-            return float(value) if value else None
-        return value
-
-    return {
-        "store": raw_json.get("store", "").strip().title(),
-        "date": raw_json.get("date", "").replace("/", "-"),
-        "total": clean_price(raw_json.get("total")),
-        "items": [
-            {
-                "name": i.get("name", "").title(),
-                "price": clean_price(i.get("price")),
-                "qty": int(i.get("quantity", 1))
-            }
-            for i in raw_json.get("items", [])
-        ]
+    Robustly normalize Donut/CORD-style output into frontend schema:
+    {
+      "store": "",
+      "date": "",
+      "total": <float>,
+      "items": [{"name": str, "qty": int, "price": float}, ...]
     }
+    Handles strings, dicts with text_sequence/menu/items, or lists.
+    """
+
+    import json, re
+
+    def extract_json(text):
+        """Extract and parse the first JSON object from messy text."""
+        if not isinstance(text, str):
+            return None
+        text = text.strip()
+        try:
+            return json.loads(text)
+        except Exception:
+            pass
+        start = text.find("{")
+        if start == -1:
+            return None
+        depth = 0
+        for i in range(start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[start:i+1])
+                    except Exception:
+                        break
+        return None
+
+    def to_float(val):
+        if val is None:
+            return 0.0
+        if isinstance(val, (int, float)):
+            return float(val)
+        s = re.sub(r"[^0-9,.\-]", "", str(val))
+        s = s.replace(",", "")
+        if s.endswith("."):
+            s = s[:-1]
+        try:
+            return float(s)
+        except Exception:
+            return 0.0
+
+    def to_int(val):
+        if val is None:
+            return 1
+        if isinstance(val, int):
+            return val
+        s = str(val).lower()
+        m = re.search(r"(\d+)", s)
+        return int(m.group(1)) if m else 1
+
+    # --- Step 1: Parse and clean input ---
+    if isinstance(raw_json, dict) and "text_sequence" in raw_json:
+        parsed = extract_json(raw_json["text_sequence"])
+        raw_json = parsed or raw_json
+    elif isinstance(raw_json, str):
+        parsed = extract_json(raw_json)
+        raw_json = parsed or {}
+
+    # --- Step 2: Locate items container ---
+    if isinstance(raw_json, list):
+        items_src = raw_json
+    elif isinstance(raw_json, dict):
+        items_src = (
+            raw_json.get("menu")
+            or raw_json.get("items")
+            or ([raw_json] if any(k in raw_json for k in ("nm", "name", "description", "price")) else [])
+        )
+    else:
+        items_src = []
+
+    # --- Step 3: Normalize item fields ---
+    items = []
+    for d in items_src:
+        if not isinstance(d, dict):
+            continue
+        if set(d.keys()) <= {"sub_total", "total", "subtotal_price", "tax_price", "service_price"}:
+            continue
+
+        name = d.get("nm") or d.get("name") or d.get("description") or ""
+        qty = d.get("cnt") or d.get("qty") or d.get("quantity") or 1
+        price = d.get("price") or d.get("total") or 0
+
+        items.append({
+            "name": str(name).strip().title(),
+            "qty": to_int(qty),
+            "price": to_float(price)
+        })
+
+    total = sum(i["price"] for i in items)
+    return {"store": "", "date": "", "total": total, "items": items}
+
 
 
 @app.function(image=inference_image)
@@ -225,10 +291,12 @@ def get_status():
     secrets=[Secret.from_name(SECRET_NAME)]
 )
 def process_receipt(image_bytes: bytes, api_key: str):
-    """Full pipeline: preprocess -> transcript -> normalize"""
+    """Full pipeline: preprocess -> transcript -> normalize
+    to be fully honest, the preprocessing and normalising is weird, so none of that
+    """
     verify_internal_key(api_key)
 
     preprocessed = preprocess_image.local(image_bytes)
-    raw = transcript_receipt.local(image_bytes, api_key)
+    raw = transcript_receipt.local(preprocessed, api_key)
     normalized = normalize_output.local(raw)
-    return raw
+    return normalized

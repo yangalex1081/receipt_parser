@@ -4,7 +4,7 @@ from PIL import Image, ImageEnhance, ImageFilter
 import cv2
 import matplotlib.pyplot as plt
 
-def preprocess_image(image_bytes: bytes) -> bytes:
+def preprocess_image_1(image_bytes: bytes) -> bytes:
     """
     Preprocess receipt images:
       - Converts to grayscale
@@ -43,12 +43,43 @@ def preprocess_image(image_bytes: bytes) -> bytes:
     image.save(buf, format="PNG")
     return buf.getvalue()
 
+def preprocess_image_2(image_bytes: bytes) -> bytes:
+    """
+    Light, Donut-friendly preprocessing:
+      - Keep RGB
+      - Optional gentle contrast stretch
+      - Resize (preserve aspect ratio)
+      - Mild sharpening
+    """
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+
+    # 1️⃣ Gentle contrast — 1.2x instead of 2.0x
+    enhancer = ImageEnhance.Contrast(image)
+    image = enhancer.enhance(1.8)
+
+    # 2️⃣ Resize — ensure longest side ≤ 1280px
+    max_size = 1280
+    w, h = image.size
+    scale = min(max_size / max(w, h), 1.0)
+    if scale < 1.0:
+        new_size = (int(w * scale), int(h * scale))
+        image = image.resize(new_size, Image.Resampling.LANCZOS)
+
+    # 3️⃣ Mild sharpening — avoids over-edge artifacts
+    image = image.filter(ImageFilter.UnsharpMask(radius=0.8, percent=100, threshold=3))
+
+    # Save
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 
 def compare_images(path):
     with open(path, "rb") as f:
         original_bytes = f.read()
 
-    processed_bytes = preprocess_image(original_bytes)
+    processed_bytes = preprocess_image_2(original_bytes)
 
     # Convert both for display
     original = Image.open(io.BytesIO(original_bytes)).convert("RGB")
