@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 
 const ReceiptTable = ({ parsedData = {}, onChange }) => {
   const [items, setItems] = useState([]);
@@ -24,7 +24,7 @@ const ReceiptTable = ({ parsedData = {}, onChange }) => {
   };
 
   const handleAddRow = () => {
-    const updated = [...items, { name: "", qty: 1, price: 0 }];
+    const updated = [...items, { name: "", qty: 1, price: 0, buyer: "" }];
     setItems(updated);
     if (onChange) onChange({ ...parsedData, items: updated });
   };
@@ -39,17 +39,38 @@ const ReceiptTable = ({ parsedData = {}, onChange }) => {
       alert("No parsed data available to fill.");
       return;
     }
-    console.log("Filling data with: ", parsedData)
-    // Handle both array and object data structures
     const dataToFill = Array.isArray(parsedData)
       ? parsedData
       : Array.isArray(parsedData.items)
       ? parsedData.items
       : [];
 
-    setItems(dataToFill);
-    if (onChange) onChange({ ...parsedData, items: dataToFill });
+    const enriched = dataToFill.map((i) => ({
+      ...i,
+      buyer: i.buyer || "",
+    }));
+
+    setItems(enriched);
+    if (onChange) onChange({ ...parsedData, items: enriched });
   };
+
+  // --- Totals --------------------------------------------------------------
+
+  const totalAmount = useMemo(
+    () =>
+      items.reduce((sum, i) => sum + (parseFloat(i.price || 0) * (i.qty || 1)), 0),
+    [items]
+  );
+
+  const totalsByBuyer = useMemo(() => {
+    const map = {};
+    for (const i of items) {
+      const buyer = i.buyer?.trim() || "Unassigned";
+      const subtotal = parseFloat(i.price || 0) * (i.qty || 1);
+      map[buyer] = (map[buyer] || 0) + subtotal;
+    }
+    return map;
+  }, [items]);
 
   // --- Rendering -----------------------------------------------------------
 
@@ -105,6 +126,7 @@ const ReceiptTable = ({ parsedData = {}, onChange }) => {
             <th>Name</th>
             <th>Qty</th>
             <th>Price ($)</th>
+            <th>Buyer</th>
           </tr>
         </thead>
         <tbody>
@@ -160,16 +182,47 @@ const ReceiptTable = ({ parsedData = {}, onChange }) => {
                     }}
                   />
                 </td>
+                <td>
+                  <input
+                    type="text"
+                    value={item.buyer || ""}
+                    onChange={(e) => handleEdit(i, "buyer", e.target.value)}
+                    placeholder="e.g. Alex"
+                    style={{
+                      width: "100%",
+                      background: "transparent",
+                      border: "none",
+                      borderBottom: "1px solid #ddd",
+                      color: "#333",
+                    }}
+                  />
+                </td>
               </tr>
             ))
           ) : (
             <tr>
-              <td colSpan="3" style={{ textAlign: "center", color: "#888" }}>
+              <td colSpan="4" style={{ textAlign: "center", color: "#888" }}>
                 No items yet
               </td>
             </tr>
           )}
         </tbody>
+        {items.length > 0 && (
+          <tfoot style={{ backgroundColor: "#fafafa" }}>
+            <tr>
+              <td colSpan="4" style={{ borderTop: "1px solid #ccc", padding: "8px" }}>
+                <strong>Total: ${totalAmount.toFixed(2)}</strong>
+              </td>
+            </tr>
+            {Object.entries(totalsByBuyer).map(([buyer, total]) => (
+              <tr key={buyer}>
+                <td colSpan="4" style={{ paddingLeft: "16px", color: "#444" }}>
+                  {buyer}: ${total.toFixed(2)}
+                </td>
+              </tr>
+            ))}
+          </tfoot>
+        )}
       </table>
 
       {/* Add row */}

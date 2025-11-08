@@ -23,9 +23,6 @@ const App = () => {
           <h1>🧾 Receipt Parser</h1>
           <UploadForm onParsed={setParsedData} />
         </div>
-        <div>
-          <UploadFake onParsed={setParsedData} />
-        </div>
 
         {/* Right side — Table always visible */}
         <div
@@ -34,7 +31,7 @@ const App = () => {
             borderLeft: "1px solid #ccc",
             padding: "20px",
             overflowY: "auto",
-            background: "#fafafa",
+            background: "#f8f8f874",
           }}
         >
           <ReceiptTable parsedData={parsedData} onChange={setParsedData} />
