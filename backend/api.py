@@ -12,7 +12,7 @@ web_app = fastapi.FastAPI()
 
 # Allowed origins (frontend)
 ALLOWED_ORIGINS = [
-    "https://receipt-parser.vercel.app",  # production
+    "https://alexs-receipt-parser.netlify.app",  # production
     "http://localhost:3000",              # local dev
 ]
 
