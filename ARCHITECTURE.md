@@ -1,0 +1,377 @@
+# Receipt Parser — Architecture
+
+A receipt photo goes in, structured line items come out. Two deployables: a React
+SPA on Netlify, and a single Modal app holding both the FastAPI gateway and the
+GPU inference functions (Donut).
+
+---
+
+## 1. System overview
+
+```
+┌─────────────────┐
+│  Browser        │  React 19 + Vite SPA
+│  (public)       │  Holds no credentials of any kind
+└────────┬────────┘
+         │  same-origin  /api/*
+         ▼
+┌─────────────────┐
+│  Netlify        │  Static host + edge proxy
+│  edge           │  • signs each proxied request (HS256 JWS -> x-nf-sign)
+│                 │  • enforces per-IP rate limits
+│                 │  • holds NETLIFY_SIGN_SECRET (never sent to browser)
+└────────┬────────┘
+         │  https + x-nf-sign
+         ▼
+┌─────────────────────────── Modal app: receipt-parser ───────────────────────┐
+│                                                                             │
+│  ┌─────────────────┐                      ┌─────────────────┐               │
+│  │  gateway.py     │  process_receipt     │  funcs.py       │               │
+│  │  gateway_image  │  .spawn()            │  inference_image│               │
+│  │  (slim, CPU)    │ ───────────────────▶ │  (ML, GPU)      │               │
+│  │                 │                      │                 │               │
+│  │ • verifies JWS  │                      │ preprocess ->   │               │
+│  │ • spawns jobs   │                      │ Donut ->        │               │
+│  │ • polls results │                      │ normalize       │               │
+│  └─────────────────┘                      └─────────────────┘               │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+One Modal app, two images. A Modal app is a deployment namespace, not a resource
+boundary — GPU is requested per function — so the gateway stays CPU-only and
+slim while the workers get the full ML stack. One `modal deploy` covers both,
+and the gateway calls `process_receipt.spawn()` by direct Python reference
+rather than resolving another app by string name.
+
+The browser never talks to Modal directly, and never possesses a secret. That is
+the central design constraint — see §5.
+
+---
+
+## 2. Request lifecycle
+
+Parsing is **asynchronous**. A cold GPU start takes ~65s, which exceeds both the
+Netlify proxy timeout (26s) and any reasonable browser wait, so the upload and
+the result are two separate round trips.
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant N as Netlify edge
+    participant G as FastAPI gateway (Modal)
+    participant W as GPU worker (Modal)
+
+    B->>B: downscale image to <=1600px JPEG
+    B->>N: POST /api/parse (multipart, no credentials)
+    N->>N: rate limit (6/min/IP), sign with HS256
+    N->>G: POST /parse + x-nf-sign
+    G->>G: verify JWS, validate image
+    G->>W: process_receipt.spawn(bytes, api_key)
+    G-->>B: 200 {status:"pending", call_id:"fc-..."}
+
+    loop every 1.5-3s until done
+        B->>N: GET /api/result/{call_id}
+        N->>N: rate limit (120/min/IP), sign
+        N->>G: GET /result/{call_id} + x-nf-sign
+        G->>W: FunctionCall.from_id(id).get(timeout=0)
+        alt still running
+            G-->>B: {status:"pending"}
+        else finished
+            G-->>B: {status:"done", result:{...}}
+        end
+    end
+```
+
+Timings measured against production:
+
+| Path | Latency |
+|---|---|
+| Cold start (first parse after idle) | ~66s |
+| Warm parse | ~3.4s |
+| `/parse` spawn (returns immediately) | <1s |
+| `/result/{id}` poll | ~0.2s |
+
+Because every HTTP call is now sub-second, the 26s proxy ceiling never binds.
+
+---
+
+## 3. Components
+
+### 3.1 Frontend — `receipt-parser-frontend/`
+
+Vite + React 19, deployed to Netlify.
+
+| File | Role |
+|---|---|
+| `src/App.jsx` | Two-pane layout; owns `parsedData` state |
+| `src/components/UploadForm.jsx` | File select, downscale, upload, poll, progress/error UI |
+| `src/components/ReceiptTable.jsx` | Editable item table, per-buyer totals |
+| `src/components/HealthCheck.jsx` | Calls `/api/health` |
+| `src/components/UploadFake.jsx` | Mock parser — imported by `App.jsx` but never rendered |
+| `netlify.toml` | Proxy rules, signing, rate limits |
+
+Backend files:
+
+| File | Role |
+|---|---|
+| `backend/config.py` | The Modal app, both image definitions, shared constants |
+| `backend/gateway.py` | FastAPI routes + auth — **deploy entrypoint** |
+| `backend/funcs.py` | GPU pipeline |
+| `backend/requirements-gateway.txt` | 4 deps for the gateway image |
+| `backend/requirements-gpu.txt` | Full ML stack for the inference image |
+
+**Client-side downscaling.** Netlify caps request bodies at 6MB, ~4.5MB once
+binary is base64-encoded. Phone photos routinely exceed that, so `UploadForm`
+re-encodes to at most 1600px on the long edge at JPEG q=0.85 before upload.
+Images already under 2MB with no resize needed are passed through untouched.
+
+**Polling.** Starts at 1.5s, backs off ×1.3 to a 3s ceiling, gives up at 150s.
+A `cancelledRef` stops the loop on reset or unmount so no orphaned poll survives.
+
+### 3.2 Netlify edge — `receipt-parser-frontend/netlify.toml`
+
+Every backend call is a same-origin `/api/*` request that Netlify rewrites to
+Modal. Two things happen at this hop:
+
+**Signing.** `signed = "NETLIFY_SIGN_SECRET"` makes Netlify attach an HS256 JWS
+in the `x-nf-sign` header:
+
+```json
+{ "iss": "netlify",
+  "site_url": "https://alexs-receipt-parser.netlify.app",
+  "deploy_context": "production",
+  "netlify_id": "…",
+  "exp": 1623876755 }
+```
+
+**Rate limiting.** Per IP per domain:
+
+| Route | Limit | Why |
+|---|---|---|
+| `/api/parse` | 6 / 60s | Each accepted request costs GPU time |
+| `/api/result/*` | 120 / 60s | One cold-start upload polls ~22 times |
+| `/api/health` | 30 / 60s | Cheap, but not free |
+
+Exceeding a limit returns `429`, which `UploadForm` surfaces as a readable
+message. Rate limits are honoured **only** in `netlify.toml`, never in a
+`_redirects` file. `window_size` may not exceed 180s.
+
+The SPA fallback (`/*` → `/index.html`) must stay last so it does not shadow the
+`/api` rules.
+
+### 3.3 Gateway — `backend/gateway.py`
+
+FastAPI served by Modal (`@modal.asgi_app()`) on `gateway_image` — fastapi,
+modal, PyJWT, python-multipart, and nothing else. This image's cold start is on
+the critical path of every request, so it deliberately excludes the ML stack.
+
+It is also the deploy entrypoint: importing `funcs` registers the GPU functions
+on the same app, so `modal deploy backend/gateway.py` covers everything.
+
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `GET /health` | public | Uptime probe |
+| `GET /status` | signed | GPU/device/model info |
+| `POST /parse` | signed | Validate image, `spawn()` job, return `call_id` |
+| `GET /result/{call_id}` | signed | Poll — `pending` / `done` / `410 expired` |
+
+`verify_netlify_signature` is a **FastAPI dependency**, not an HTTP middleware.
+This is deliberate: `HTTPException` raised inside a middleware bypasses FastAPI's
+exception handlers and surfaces as a `500`. The previous bearer-token middleware
+had exactly that bug — rejections returned 500 instead of 401.
+
+Verification pins `algorithms=["HS256"]` (blocking `alg=none` forgery) and
+additionally asserts `iss == "netlify"`.
+
+Upload validation: content-type must start with `image/`, body must be non-empty
+and ≤6MB (`400` / `413`).
+
+### 3.4 GPU functions — `backend/funcs.py`
+
+Same Modal app, `inference_image`. Model is
+`naver-clova-ix/donut-base-finetuned-cord-v2`, cached in a Modal Volume
+(`hf-hub-cache`) mounted at `/root/models`.
+
+torch, transformers, cv2, and numpy are imported inside an
+`inference_image.imports()` block rather than at module scope. Without that, the
+gateway — which imports this module to reference `process_receipt` — would try
+to load the ML stack on its slim image and fail.
+
+| Function | GPU | Role |
+|---|---|---|
+| `preprocess_image` | no | Contrast ×1.8, resize ≤1280px, unsharp mask, → PNG |
+| `transcript_receipt` | yes | Donut inference, `retries=3` |
+| `normalize_output` | no | Map Donut's `nm`/`cnt`/`price` → `name`/`qty`/`price` |
+| `process_receipt` | yes | Orchestrates the three above via `.local()` |
+| `get_status` | no | Reports device/model |
+
+`process_receipt` invokes the others with `.local()`, so the whole pipeline runs
+inside one GPU container rather than as three remote hops.
+
+These functions have no web decorator (`@modal.asgi_app()` / web endpoint), so
+they are not internet-reachable at all — invoking them requires authenticated
+access to the Modal workspace.
+
+**Response shape:**
+
+```json
+{ "store": "", "date": "", "total": 12.34,
+  "items": [ { "name": "Apples", "qty": 3, "price": 5.99 } ] }
+```
+
+---
+
+## 4. Secrets
+
+| Name | Lives in | Used by | Purpose |
+|---|---|---|---|
+| `NETLIFY_SIGN_SECRET` | Netlify env (Runtime scope) **and** Modal `RECEIPT_PARSER_SECRET` — same value | Netlify edge signs, gateway verifies | Proves a request came through our Netlify site |
+
+Exactly one secret. Use ≥32 bytes (`openssl rand -hex 32`); PyJWT warns below
+that for HS256.
+
+A previous `RECEIPT_API_KEY` gated the GPU functions against the gateway. Once
+both live in one Modal app and the gateway holds a direct reference, that check
+was the app authenticating itself to itself, and it was removed.
+
+**No secret is available to the browser, by construction.** Only `VITE_`-prefixed
+variables are inlined into the bundle by Vite, and there are none left.
+
+---
+
+## 5. Security model
+
+### What is guaranteed
+
+- **No credential ever reaches the browser.** This matters because it is not
+  fixable by other means: anything the browser can obtain, the person operating
+  the browser can obtain. Encrypting a key in the bundle requires shipping the
+  decryption key; fetching one at runtime just moves it to the Network tab.
+- **Modal is not directly addressable.** Requests without a valid `x-nf-sign`
+  are rejected with `401`. A scanner that discovers the `modal.run` URL gets
+  nothing, and the URL no longer appears in the frontend bundle at all.
+- **Signatures expire.** The JWS carries an `exp`, so a captured token is
+  short-lived — unlike the previous static key, which was valid forever.
+
+### What is not guaranteed
+
+**The Netlify `/api/*` routes are public.** Netlify signs and forwards a `curl`
+exactly as it would a browser click. Rate limiting is what constrains this — 6
+parses per minute per IP — not authentication. A distributed source across many
+IPs would still get through.
+
+Closing that gap requires proving a *human on your page* rather than proving the
+*origin*: Cloudflare Turnstile (invisible, free, validated server-side — needs a
+Netlify Function rather than a bare redirect) or real user login. Neither is
+implemented; the rate limit is the current answer.
+
+### Prior design, and why it was replaced
+
+`VITE_API_KEY` was inlined into the public bundle at build time and served to
+every visitor — verifiable with
+`curl -s https://alexs-receipt-parser.netlify.app/assets/index-*.js | grep Bearer`.
+`.gitignore` kept it out of git history but had no bearing on the deployed
+bundle. CORS was the only real control, and CORS is enforced by browsers only.
+
+---
+
+## 6. Local development
+
+`/api/*` exists only inside Netlify's proxy, so plain `npm run dev` cannot reach
+the backend. Use the Netlify CLI:
+
+```bash
+npm install -g netlify-cli
+cd receipt-parser-frontend
+netlify dev            # applies netlify.toml redirects, loads env vars
+```
+
+> **Unverified:** Netlify's docs confirm `netlify dev` applies redirect rules and
+> loads env vars for all scopes locally, but do not state whether the `signed`
+> property is applied. If local requests come back `401`, signing is not being
+> applied locally and a dev-only bypass in the gateway will be needed.
+
+Backend tests run without network access by stubbing `modal` — see §8.
+
+---
+
+## 7. Deployment
+
+Two deploys that must move together:
+
+```bash
+modal deploy backend/gateway.py   # gateway + GPU functions — deploy FIRST
+git push                          # Netlify builds the frontend
+```
+
+One Modal command covers both halves, because importing `funcs` registers the
+GPU functions on the same app.
+
+Order matters: the live frontend sends credentials the new gateway does not
+accept (and vice versa), so there is a brief window where parsing fails. Deploy
+Modal first and keep the gap short, or teach the gateway to accept both schemes
+temporarily for a zero-downtime cutover.
+
+**The Modal URL is derived from the app name.** Renaming the app to
+`receipt-parser` changed it:
+
+```
+old: https://yangalex1081--receipt-parser-api-fastapi-app.modal.run
+new: https://yangalex1081--receipt-parser-fastapi-app.modal.run
+```
+
+`netlify.toml` has been updated to match — confirm against the URL that
+`modal deploy` prints, since a mismatch means every proxied call 404s.
+
+Netlify build settings live in the dashboard, not in `netlify.toml` — the file
+intentionally declares redirects only, so it cannot override them. It sits in
+`receipt-parser-frontend/` because that is the configured base directory.
+
+---
+
+## 8. Testing
+
+No test suite is checked in. The gateway was verified by importing the real
+FastAPI app with `modal` stubbed and exercising it via `TestClient`:
+
+- Auth: unsigned / malformed / wrong-secret / expired / wrong-issuer / `alg=none`
+  all → `401`; valid signature → `200`; `/health` stays public.
+- Upload: non-image → `400`, empty → `400`, >6MB → `413`.
+- Result: pending / done / expired (`410`) / job failure (`500`).
+
+Worth promoting into a committed `pytest` suite.
+
+---
+
+## 9. Known issues
+
+**Extraction quality — the big one.** Live parses return near-empty results:
+`store` and `date` are always `""` (hardcoded in `normalize_output`), and test
+images returned zero or nameless items. The auth and transport layers are sound;
+the model output is not.
+
+**Total mismatch.** The backend computes `total = sum(price)` with no quantity
+multiplication, while `ReceiptTable` computes `price × qty`. The two disagree
+for any `qty > 1`, and `parsedData.total` is never displayed.
+
+**Frontend state.** `ReceiptTable` mirrors `parsedData.items` into local state
+and re-syncs on every change, so each keystroke round-trips through the parent.
+It converges today but will fight any parent-side normalization; rendering
+directly from props would remove the class of bug.
+
+**Dead code.** `UploadFake.jsx` is imported but never rendered; `App.css` is
+never imported; `src/assets/react.svg` is 0 bytes; `index.html` still carries the
+Vite template title and favicon.
+
+**Styling.** `index.css` sets a dark background while `ReceiptTable` hardcodes
+dark text — unreadable in dark mode. The 50/50 `100vh` split has no mobile
+breakpoint, on an app whose premise is photographing receipts with a phone.
+
+**Repo hygiene.** `package-lock.json` is gitignored, so frontend builds are not
+reproducible on Netlify. (`backend/__pycache__` was tracked despite being
+gitignored; it has been removed from the working tree but the deletion still
+needs committing.)
+
+**Orphaned endpoint.** `GET /status` requires a signature but has no
+`netlify.toml` route, so it is unreachable from the browser. Harmless; add a
+proxy rule or drop it.

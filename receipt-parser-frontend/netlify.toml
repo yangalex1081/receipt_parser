@@ -1,0 +1,60 @@
+# Proxy rules for the Modal backend.
+#
+# The browser only ever talks to this site's own origin (/api/*). Netlify
+# forwards each request to Modal and signs it with an HS256 JWS in the
+# `x-nf-sign` header, using the secret named below. The secret lives only in
+# Netlify's environment (Runtime scope) and in the Modal secret that verifies
+# it — it is never sent to the browser and never enters the JS bundle.
+#
+# Requires NETLIFY_SIGN_SECRET to be set in Site settings -> Environment
+# variables, with the same value stored in the Modal secret RECEIPT_PARSER_SECRET.
+#
+# Note: rate limits are only honoured in netlify.toml, never in a _redirects file.
+
+# --- Upload: spawns a GPU job, returns a call_id immediately ----------------
+# Strictly limited: every accepted request costs GPU time.
+[[redirects]]
+  from = "/api/parse"
+  to = "https://yangalex1081--receipt-parser-fastapi-app.modal.run/parse"
+  status = 200
+  force = true
+  signed = "NETLIFY_SIGN_SECRET"
+
+  [redirects.rate_limit]
+    window_limit = 6
+    window_size = 60
+    aggregate_by = ["ip", "domain"]
+
+# --- Poll: cheap status check, called repeatedly while a job runs -----------
+# Generous, because a cold start (~66s) at a 3s poll interval is ~22 requests
+# for one legitimate upload.
+[[redirects]]
+  from = "/api/result/*"
+  to = "https://yangalex1081--receipt-parser-fastapi-app.modal.run/result/:splat"
+  status = 200
+  force = true
+  signed = "NETLIFY_SIGN_SECRET"
+
+  [redirects.rate_limit]
+    window_limit = 120
+    window_size = 60
+    aggregate_by = ["ip", "domain"]
+
+# --- Health: unauthenticated upstream, still proxied to stay same-origin ----
+[[redirects]]
+  from = "/api/health"
+  to = "https://yangalex1081--receipt-parser-fastapi-app.modal.run/health"
+  status = 200
+  force = true
+  signed = "NETLIFY_SIGN_SECRET"
+
+  [redirects.rate_limit]
+    window_limit = 30
+    window_size = 60
+    aggregate_by = ["ip", "domain"]
+
+# SPA fallback — must stay last so it does not shadow the /api rules above.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
