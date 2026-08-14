@@ -1,3 +1,5 @@
+# GPU inference image — the full ML stack (Donut, torch, opencv).
+# The gateway uses requirements-gateway.txt instead.
 accelerate==1.10.1
 aiohappyeyeballs==2.6.1
 aiohttp==3.13.1

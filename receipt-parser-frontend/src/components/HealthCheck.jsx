@@ -5,17 +5,13 @@ const HealthCheck = () => {
   const [response, setResponse] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const apiBase = import.meta.env.VITE_API_URL;
-
+  // Same-origin: Netlify proxies /api/* to Modal and signs the request.
   const handleHealthCheck = async () => {
     setLoading(true);
     setResponse(null);
 
     try {
-      if (!apiBase) {
-        throw new Error("VITE_API_URL is undefined. Check your .env and restart dev server.");
-      }
-      const url = `${apiBase.replace(/\/+$/, "")}/health`;
+      const url = "/api/health";
       console.log("[HealthCheck] GET", url);
 
       const res = await axios.get(url);

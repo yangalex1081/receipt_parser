@@ -1,23 +1,26 @@
-import modal
-from PIL import Image, ImageEnhance, ImageOps, ImageFilter
-import io, re, os
-import torch
-from transformers import DonutProcessor, VisionEncoderDecoderModel
+"""GPU inference functions: preprocess -> Donut transcription -> normalize."""
+
+import io
+import re
 from functools import lru_cache
-from modal import Secret
-import numpy as np
-import cv2
 
-# Modal App and Docker Image
-app = modal.App('receipt-parsing-functions')
-
-inference_image = (
-    modal.Image.debian_slim(python_version="3.12")
-    .apt_install("libgl1", "libglib2.0-0")
-    .pip_install_from_requirements('requirements.txt')
+from config import (
+    MODEL_CACHE_PATH,
+    MODEL_NAME,
+    app,
+    inference_image,
+    model_cache,
 )
-# Declare the model name, no need to add a revision so HuggingFace always gives the latest model
-MODEL_NAME = "naver-clova-ix/donut-base-finetuned-cord-v2"
+
+# These only exist inside containers built on inference_image. Importing them at
+# module scope would break the gateway, which imports this module to reference
+# process_receipt but runs on a slim image without the ML stack.
+with inference_image.imports():
+    import cv2  # noqa: F401  (loaded for libgl parity with prior image)
+    import numpy as np  # noqa: F401
+    import torch
+    from PIL import Image, ImageEnhance, ImageFilter
+    from transformers import DonutProcessor, VisionEncoderDecoderModel
 
 # Declare the prompt DONUT should use
 PROMPT = """<s_cord-v2>
@@ -53,37 +56,18 @@ Now extract and return only the JSON result for this receipt:
 <s_answer>"""
 
 
-
-# API key added via Modal secret
-SECRET_NAME = "RECEIPT_PARSER_SECRET"
-API_KEY_ENV = "RECEIPT_API_KEY"
-
-def verify_internal_key(provided_key: str):
-    """Ensure only authorized callers can use these functions"""
-    expected_key = os.environ.get(API_KEY_ENV)
-    if provided_key != expected_key:
-        raise PermissionError("Unauthorized: Invalid internal API key.")
-
 @lru_cache(maxsize=1)
 def setup():
     # Load the pretrained Donut model
-    processor = DonutProcessor.from_pretrained(MODEL_NAME, use_fast = True)
+    processor = DonutProcessor.from_pretrained(MODEL_NAME, use_fast=True)
     model = VisionEncoderDecoderModel.from_pretrained(MODEL_NAME)
 
-    # Tell the model what to run on 
+    # Tell the model what to run on
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
 
     return processor, model, device
 
-# Cache the DONUT model to reduce cost of cold start
-model_cache = modal.Volume.from_name("hf-hub-cache", create_if_missing=True)
-
-MODEL_CACHE_PATH = "/root/models"
-inference_image = inference_image.env(
-    {"HF_HUB_CACHE": MODEL_CACHE_PATH,
-     "HF_HUB_ENABLE_HF_TRANSFER": "0"}
-)
 
 # Func to preprocess receipt
 @app.function(image=inference_image)
@@ -118,18 +102,14 @@ def preprocess_image(image_bytes: bytes) -> bytes:
     return buf.getvalue()
 
 
-
 @app.function(
-    image=inference_image, 
+    image=inference_image,
     gpu="any",
     retries=3,
     volumes={MODEL_CACHE_PATH: model_cache},
-    secrets=[Secret.from_name(SECRET_NAME)]
 )
-def transcript_receipt(image_bytes: bytes, api_key: str):
+def transcript_receipt(image_bytes: bytes):
     """Function to transcript a receipt and return the contents in JSON"""
-    verify_internal_key(api_key)
-
     # Load model and processor
     processor, model, device = setup()
 
@@ -166,6 +146,7 @@ def transcript_receipt(image_bytes: bytes, api_key: str):
     sequence = re.sub(r"<.*?>", "", sequence, count=1).strip()  # remove first task start token
 
     return processor.token2json(sequence)
+
 
 @app.function(image=inference_image)
 def normalize_output(raw_json):
@@ -272,7 +253,6 @@ def normalize_output(raw_json):
     return {"store": "", "date": "", "total": total, "items": items}
 
 
-
 @app.function(image=inference_image)
 def get_status():
     gpu = torch.cuda.is_available()
@@ -280,23 +260,23 @@ def get_status():
         "status": "ready",
         "gpu": gpu,
         "device": "cuda" if gpu else "cpu",
-        "model": MODEL_NAME
+        "model": MODEL_NAME,
     }
 
+
 @app.function(
-    image=inference_image, 
+    image=inference_image,
     gpu="any",
     retries=3,
     volumes={MODEL_CACHE_PATH: model_cache},
-    secrets=[Secret.from_name(SECRET_NAME)]
 )
-def process_receipt(image_bytes: bytes, api_key: str):
+def process_receipt(image_bytes: bytes):
     """Full pipeline: preprocess -> transcript -> normalize
-    to be fully honest, the preprocessing and normalising is weird, so none of that
-    """
-    verify_internal_key(api_key)
 
+    Runs the three stages with .local() so they share one GPU container rather
+    than making three remote hops.
+    """
     preprocessed = preprocess_image.local(image_bytes)
-    raw = transcript_receipt.local(preprocessed, api_key)
+    raw = transcript_receipt.local(preprocessed)
     normalized = normalize_output.local(raw)
     return normalized
