@@ -45,6 +45,8 @@ modal.toml
 # =========================================================
 .env
 .env.*
+# template only — documents required vars, holds no values
+!.env.example
 *.secret
 *.pem
 *.key

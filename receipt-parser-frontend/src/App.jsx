@@ -2,15 +2,23 @@ import React, { useState } from "react";
 import UploadForm from "./components/UploadForm";
 import ReceiptTable from "./components/ReceiptTable";
 import HealthCheck from "./components/HealthCheck";
-import UploadFake from "./components/UploadFake";
+
+const EMPTY = { store: "", date: "", total: 0, items: [] };
 
 const App = () => {
-  const [parsedData, setParsedData] = useState({
-    store: "",
-    date: "",
-    total: 0,
-    items: [],
-  });
+  // The working copy the table edits.
+  const [parsedData, setParsedData] = useState(EMPTY);
+  // The untouched parser output, so edits can be discarded.
+  const [lastParsed, setLastParsed] = useState(null);
+
+  const handleParsed = (data) => {
+    setParsedData(data);
+    setLastParsed(data);
+  };
+
+  const handleRestore = () => {
+    if (lastParsed) setParsedData(lastParsed);
+  };
 
   return (
     <div>
@@ -21,7 +29,7 @@ const App = () => {
         {/* Left side — Upload and controls */}
         <div style={{ flex: 1, padding: "20px" }}>
           <h1>🧾 Receipt Parser</h1>
-          <UploadForm onParsed={setParsedData} />
+          <UploadForm onParsed={handleParsed} />
         </div>
 
         {/* Right side — Table always visible */}
@@ -34,7 +42,12 @@ const App = () => {
             background: "#f8f8f874",
           }}
         >
-          <ReceiptTable parsedData={parsedData} onChange={setParsedData} />
+          <ReceiptTable
+            parsedData={parsedData}
+            onChange={setParsedData}
+            onRestore={handleRestore}
+            canRestore={lastParsed !== null && parsedData !== lastParsed}
+          />
         </div>
       </div>
     </div>

@@ -103,11 +103,15 @@ class FakeFunctionCall:
             raise modal.exception.OutputExpiredError()
         if FakeFunctionCall.mode == "failed":
             raise RuntimeError("gpu exploded")
+        # price is the LINE TOTAL, so total == sum(price), never sum(price*qty).
         return {
             "store": "Test Mart",
             "date": "2026-08-14",
-            "total": 9.99,
-            "items": [{"name": "Apples", "qty": 3, "price": 3.33}],
+            "total": 15.00,
+            "items": [
+                {"name": "Apples", "qty": 3, "price": 9.00},
+                {"name": "Latte", "qty": 2, "price": 6.00},
+            ],
         }
 
 
@@ -290,6 +294,23 @@ def test_result_done_returns_payload(client, sign):
     assert body["status"] == "done"
     assert body["result"]["store"] == "Test Mart"
     assert body["result"]["items"][0]["qty"] == 3
+
+
+def test_price_is_a_line_total_not_a_unit_price(client, sign):
+    """Pins the schema both sides depend on.
+
+    CORD's `price` is the total for the row, so the receipt total is
+    sum(price). If anything starts multiplying by qty, this fails: the
+    qty-weighted sum here would be 39.00, not 15.00.
+    """
+    FakeFunctionCall.mode = "done"
+    result = client.get("/result/fc-TEST123", headers=sign()).json()["result"]
+
+    line_sum = sum(i["price"] for i in result["items"])
+    qty_weighted = sum(i["price"] * i["qty"] for i in result["items"])
+
+    assert result["total"] == pytest.approx(line_sum)
+    assert result["total"] != pytest.approx(qty_weighted)
 
 
 def test_result_expired(client, sign):

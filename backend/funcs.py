@@ -241,14 +241,22 @@ def normalize_output(raw_json):
 
         name = d.get("nm") or d.get("name") or d.get("description") or ""
         qty = d.get("cnt") or d.get("qty") or d.get("quantity") or 1
+        # CORD's "price" is the LINE TOTAL for the row, not the unit price
+        # ("MUFFIN, cnt 3, price 9000" means 9000 for all three). The frontend
+        # relies on that: it sums price directly and never multiplies by qty.
         price = d.get("price") or d.get("total") or 0
+        unit_price = d.get("unitprice") or d.get("unit_price")
 
-        items.append({
+        item = {
             "name": str(name).strip().title(),
             "qty": to_int(qty),
-            "price": to_float(price)
-        })
+            "price": to_float(price),
+        }
+        if unit_price is not None:
+            item["unit_price"] = to_float(unit_price)
+        items.append(item)
 
+    # Sum of line totals — deliberately not price * qty, see above.
     total = sum(i["price"] for i in items)
     return {"store": "", "date": "", "total": total, "items": items}
 

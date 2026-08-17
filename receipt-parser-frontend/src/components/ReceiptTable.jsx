@@ -1,64 +1,70 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useMemo } from "react";
 
-const ReceiptTable = ({ parsedData = {}, onChange }) => {
-  const [items, setItems] = useState([]);
+const inputStyle = {
+  width: "100%",
+  background: "transparent",
+  border: "none",
+  borderBottom: "1px solid #ddd",
+  color: "#333",
+};
 
-  // 🧠 Watch for parsedData changes and handle both possible shapes
-  useEffect(() => {
-    if (Array.isArray(parsedData)) {
-      setItems(parsedData);
-    } else if (parsedData && Array.isArray(parsedData.items)) {
-      setItems(parsedData.items);
-    } else {
-      setItems([]);
-    }
+const buttonStyle = {
+  padding: "8px 12px",
+  color: "white",
+  border: "none",
+  borderRadius: "4px",
+  cursor: "pointer",
+};
+
+/**
+ * Fully controlled: rows are rendered straight from `parsedData` and every
+ * change goes up through `onChange`. There is deliberately no local copy of
+ * the items — mirroring props into state and re-syncing in an effect meant
+ * each keystroke round-tripped through the parent, and would fight any
+ * normalization the parent applied.
+ */
+const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
+  // The parser has returned a bare array in some shapes; tolerate both.
+  const items = useMemo(() => {
+    if (Array.isArray(parsedData)) return parsedData;
+    if (Array.isArray(parsedData?.items)) return parsedData.items;
+    return [];
   }, [parsedData]);
+
+  const emit = (nextItems) => {
+    if (!onChange) return;
+    onChange(
+      Array.isArray(parsedData) ? nextItems : { ...parsedData, items: nextItems }
+    );
+  };
 
   // --- Editing handlers ----------------------------------------------------
 
   const handleEdit = (index, field, value) => {
-    const updated = [...items];
-    updated[index] = { ...updated[index], [field]: value };
-    setItems(updated);
-    if (onChange) onChange({ ...parsedData, items: updated });
+    emit(items.map((item, i) => (i === index ? { ...item, [field]: value } : item)));
   };
 
   const handleAddRow = () => {
-    const updated = [...items, { name: "", qty: 1, price: 0, buyer: "" }];
-    setItems(updated);
-    if (onChange) onChange({ ...parsedData, items: updated });
+    emit([...items, { name: "", qty: 1, price: 0, buyer: "" }]);
   };
 
-  const handleReset = () => {
-    setItems([]);
-    if (onChange) onChange({ ...parsedData, items: [] });
+  const handleRemoveRow = (index) => {
+    emit(items.filter((_, i) => i !== index));
   };
 
-  const handleFill = () => {
-    if (!parsedData) {
-      alert("No parsed data available to fill.");
-      return;
-    }
-    const dataToFill = Array.isArray(parsedData)
-      ? parsedData
-      : Array.isArray(parsedData.items)
-      ? parsedData.items
-      : [];
-
-    const enriched = dataToFill.map((i) => ({
-      ...i,
-      buyer: i.buyer || "",
-    }));
-
-    setItems(enriched);
-    if (onChange) onChange({ ...parsedData, items: enriched });
-  };
+  const handleReset = () => emit([]);
 
   // --- Totals --------------------------------------------------------------
+  //
+  // `price` is the LINE TOTAL for a row, not a unit price — that is the CORD
+  // schema the model is fine-tuned on ("MUFFIN, cnt 3, price 9000" is 9000 for
+  // all three). So totals sum price directly; multiplying by qty would count
+  // quantity twice. `qty` is informational, and unit price is price / qty.
+
+  const lineTotal = (i) => parseFloat(i.price) || 0;
 
   const totalAmount = useMemo(
-    () =>
-      items.reduce((sum, i) => sum + (parseFloat(i.price || 0) * (i.qty || 1)), 0),
+    () => items.reduce((sum, i) => sum + lineTotal(i), 0),
     [items]
   );
 
@@ -66,11 +72,16 @@ const ReceiptTable = ({ parsedData = {}, onChange }) => {
     const map = {};
     for (const i of items) {
       const buyer = i.buyer?.trim() || "Unassigned";
-      const subtotal = parseFloat(i.price || 0) * (i.qty || 1);
-      map[buyer] = (map[buyer] || 0) + subtotal;
+      map[buyer] = (map[buyer] || 0) + lineTotal(i);
     }
     return map;
   }, [items]);
+
+  // What the parser reported, for comparison against the edited rows.
+  const parsedTotal = Array.isArray(parsedData) ? null : parsedData?.total;
+  const totalsDisagree =
+    typeof parsedTotal === "number" &&
+    Math.abs(parsedTotal - totalAmount) > 0.005;
 
   // --- Rendering -----------------------------------------------------------
 
@@ -80,33 +91,23 @@ const ReceiptTable = ({ parsedData = {}, onChange }) => {
 
       {/* Controls */}
       <div style={{ marginBottom: "10px" }}>
-        <button
-          onClick={handleFill}
-          style={{
-            marginRight: "8px",
-            padding: "8px 12px",
-            backgroundColor: "#0070f3",
-            color: "white",
-            border: "none",
-            borderRadius: "4px",
-            cursor: "pointer",
-          }}
-        >
-          🔄 Fill with Parsed Data
-        </button>
+        {canRestore && (
+          <button
+            type="button"
+            onClick={onRestore}
+            style={{ ...buttonStyle, marginRight: "8px", backgroundColor: "#0070f3" }}
+            title="Discard edits and restore the original parsed items"
+          >
+            🔄 Restore Parsed Items
+          </button>
+        )}
 
         <button
+          type="button"
           onClick={handleReset}
-          style={{
-            padding: "8px 12px",
-            backgroundColor: "#d9534f",
-            color: "white",
-            border: "none",
-            borderRadius: "4px",
-            cursor: "pointer",
-          }}
+          style={{ ...buttonStyle, backgroundColor: "#d9534f" }}
         >
-          ♻️ Reset
+          ♻️ Clear
         </button>
       </div>
 
@@ -125,12 +126,13 @@ const ReceiptTable = ({ parsedData = {}, onChange }) => {
           <tr>
             <th>Name</th>
             <th>Qty</th>
-            <th>Price ($)</th>
+            <th title="Total for this line, not the unit price">Amount ($)</th>
             <th>Buyer</th>
+            <th aria-label="Remove row" />
           </tr>
         </thead>
         <tbody>
-          {Array.isArray(items) && items.length > 0 ? (
+          {items.length > 0 ? (
             items.map((item, i) => (
               <tr key={i}>
                 <td>
@@ -138,30 +140,16 @@ const ReceiptTable = ({ parsedData = {}, onChange }) => {
                     type="text"
                     value={item.name || ""}
                     onChange={(e) => handleEdit(i, "name", e.target.value)}
-                    style={{
-                      width: "100%",
-                      background: "transparent",
-                      border: "none",
-                      borderBottom: "1px solid #ddd",
-                      color: "#333",
-                    }}
+                    style={inputStyle}
                   />
                 </td>
                 <td>
                   <input
                     type="number"
                     min="1"
-                    value={item.qty || 1}
-                    onChange={(e) =>
-                      handleEdit(i, "qty", parseInt(e.target.value) || 1)
-                    }
-                    style={{
-                      width: "100%",
-                      background: "transparent",
-                      border: "none",
-                      borderBottom: "1px solid #ddd",
-                      color: "#333",
-                    }}
+                    value={item.qty ?? 1}
+                    onChange={(e) => handleEdit(i, "qty", parseInt(e.target.value) || 1)}
+                    style={inputStyle}
                   />
                 </td>
                 <td>
@@ -169,17 +157,11 @@ const ReceiptTable = ({ parsedData = {}, onChange }) => {
                     type="number"
                     min="0"
                     step="0.01"
-                    value={item.price || 0}
+                    value={item.price ?? 0}
                     onChange={(e) =>
                       handleEdit(i, "price", parseFloat(e.target.value) || 0)
                     }
-                    style={{
-                      width: "100%",
-                      background: "transparent",
-                      border: "none",
-                      borderBottom: "1px solid #ddd",
-                      color: "#333",
-                    }}
+                    style={inputStyle}
                   />
                 </td>
                 <td>
@@ -188,20 +170,30 @@ const ReceiptTable = ({ parsedData = {}, onChange }) => {
                     value={item.buyer || ""}
                     onChange={(e) => handleEdit(i, "buyer", e.target.value)}
                     placeholder="e.g. Alex"
+                    style={inputStyle}
+                  />
+                </td>
+                <td style={{ width: "1%" }}>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveRow(i)}
+                    aria-label={`Remove ${item.name || "row"}`}
                     style={{
-                      width: "100%",
                       background: "transparent",
                       border: "none",
-                      borderBottom: "1px solid #ddd",
-                      color: "#333",
+                      color: "#999",
+                      cursor: "pointer",
+                      padding: "0 6px",
                     }}
-                  />
+                  >
+                    ✕
+                  </button>
                 </td>
               </tr>
             ))
           ) : (
             <tr>
-              <td colSpan="4" style={{ textAlign: "center", color: "#888" }}>
+              <td colSpan="5" style={{ textAlign: "center", color: "#888" }}>
                 No items yet
               </td>
             </tr>
@@ -210,13 +202,20 @@ const ReceiptTable = ({ parsedData = {}, onChange }) => {
         {items.length > 0 && (
           <tfoot style={{ backgroundColor: "#fafafa" }}>
             <tr>
-              <td colSpan="4" style={{ borderTop: "1px solid #ccc", padding: "8px" }}>
+              <td colSpan="5" style={{ borderTop: "1px solid #ccc", padding: "8px" }}>
                 <strong>Total: ${totalAmount.toFixed(2)}</strong>
+                {totalsDisagree && (
+                  <span
+                    style={{ marginLeft: "10px", color: "#b8860b", fontWeight: "normal" }}
+                  >
+                    (receipt said ${parsedTotal.toFixed(2)})
+                  </span>
+                )}
               </td>
             </tr>
             {Object.entries(totalsByBuyer).map(([buyer, total]) => (
               <tr key={buyer}>
-                <td colSpan="4" style={{ paddingLeft: "16px", color: "#444" }}>
+                <td colSpan="5" style={{ paddingLeft: "16px", color: "#444" }}>
                   {buyer}: ${total.toFixed(2)}
                 </td>
               </tr>
@@ -227,16 +226,9 @@ const ReceiptTable = ({ parsedData = {}, onChange }) => {
 
       {/* Add row */}
       <button
+        type="button"
         onClick={handleAddRow}
-        style={{
-          marginTop: "12px",
-          padding: "8px 12px",
-          backgroundColor: "#28a745",
-          color: "white",
-          border: "none",
-          borderRadius: "4px",
-          cursor: "pointer",
-        }}
+        style={{ ...buttonStyle, marginTop: "12px", backgroundColor: "#28a745" }}
       >
         ➕ Add Item
       </button>
