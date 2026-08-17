@@ -66,7 +66,7 @@ sequenceDiagram
     N->>N: rate limit (6/min/IP), sign with HS256
     N->>G: POST /parse + x-nf-sign
     G->>G: verify JWS, validate image
-    G->>W: process_receipt.spawn(bytes, api_key)
+    G->>W: process_receipt.spawn(bytes)
     G-->>B: 200 {status:"pending", call_id:"fc-..."}
 
     loop every 1.5-3s until done
@@ -103,11 +103,10 @@ Vite + React 19, deployed to Netlify.
 
 | File | Role |
 |---|---|
-| `src/App.jsx` | Two-pane layout; owns `parsedData` state |
+| `src/App.jsx` | Layout; owns `parsedData` plus a pristine `lastParsed` copy |
 | `src/components/UploadForm.jsx` | File select, downscale, upload, poll, progress/error UI |
 | `src/components/ReceiptTable.jsx` | Editable item table, per-buyer totals |
 | `src/components/HealthCheck.jsx` | Calls `/api/health` |
-| `src/components/UploadFake.jsx` | Mock parser — imported by `App.jsx` but never rendered |
 | `netlify.toml` | Proxy rules, signing, rate limits |
 
 Backend files:
@@ -171,7 +170,6 @@ on the same app, so `modal deploy backend/gateway.py` covers everything.
 | Endpoint | Auth | Purpose |
 |---|---|---|
 | `GET /health` | public | Uptime probe |
-| `GET /status` | signed | GPU/device/model info |
 | `POST /parse` | signed | Validate image, `spawn()` job, return `call_id` |
 | `GET /result/{call_id}` | signed | Poll — `pending` / `done` / `410 expired` |
 
@@ -203,7 +201,6 @@ to load the ML stack on its slim image and fail.
 | `transcript_receipt` | yes | Donut inference, `retries=3` |
 | `normalize_output` | no | Map Donut's `nm`/`cnt`/`price` → `name`/`qty`/`price` |
 | `process_receipt` | yes | Orchestrates the three above via `.local()` |
-| `get_status` | no | Reports device/model |
 
 `process_receipt` invokes the others with `.local()`, so the whole pipeline runs
 inside one GPU container rather than as three remote hops.
@@ -264,6 +261,14 @@ Closing that gap requires proving a *human on your page* rather than proving the
 *origin*: Cloudflare Turnstile (invisible, free, validated server-side — needs a
 Netlify Function rather than a bare redirect) or real user login. Neither is
 implemented; the rate limit is the current answer.
+
+This is a deliberate decision, not an oversight. Turnstile would mean adding a
+serverless function in front of `/api/parse` — roughly 80 lines, and the awkward
+part is re-forwarding a multipart upload through it, near the 4.5MB ceiling. The
+signal to revisit is Modal billing showing GPU usage that traffic doesn't
+explain. Until then the rate limit is proportionate. `/api/result` and
+`/api/health` would stay plain signed redirects either way; only the expensive
+endpoint would need the check.
 
 ### Prior design, and why it was replaced
 
@@ -345,33 +350,33 @@ Worth promoting into a committed `pytest` suite.
 
 ## 9. Known issues
 
-**Extraction quality — the big one.** Live parses return near-empty results:
-`store` and `date` are always `""` (hardcoded in `normalize_output`), and test
-images returned zero or nameless items. The auth and transport layers are sound;
-the model output is not.
+**Extraction quality — the only substantial one left.** Live parses return
+near-empty results: `store` and `date` are always `""` (hardcoded in
+`normalize_output`), and test images returned zero or nameless items. The auth,
+transport, and frontend layers are sound; the model output is not.
 
-**Total mismatch.** The backend computes `total = sum(price)` with no quantity
-multiplication, while `ReceiptTable` computes `price × qty`. The two disagree
-for any `qty > 1`, and `parsedData.total` is never displayed.
+Two concrete leads:
 
-**Frontend state.** `ReceiptTable` mirrors `parsedData.items` into local state
-and re-syncs on every change, so each keystroke round-trips through the parent.
-It converges today but will fight any parent-side normalization; rendering
-directly from props would remove the class of bug.
+- `normalize_output` **discards the receipt's printed total** — it skips any
+  dict whose keys are only `sub_total` / `total` / `tax_price` / etc. Capturing
+  CORD's `total_price` would give a real cross-check against the item sum, which
+  is what catches missed line items — the most common failure. The UI already
+  renders the mismatch; it just needs a genuine number to compare against.
+- `store` and `date` are hardcoded rather than extracted, though the prompt
+  explicitly tells the model *not* to return them.
 
-**Dead code.** `UploadFake.jsx` is imported but never rendered; `App.css` is
-never imported; `src/assets/react.svg` is 0 bytes; `index.html` still carries the
-Vite template title and favicon.
+**Row keys.** `ReceiptTable` keys rows by array index. Safe while rows are only
+appended and edited, but per-row delete now exists, so removing a middle row
+shifts every later key. Inputs are fully controlled so values stay correct — it
+is latent, not live. A stable per-row id would settle it, which means deciding
+whether that id rides along in the payload sent back to the server.
 
-**Styling.** `index.css` sets a dark background while `ReceiptTable` hardcodes
-dark text — unreadable in dark mode. The 50/50 `100vh` split has no mobile
-breakpoint, on an app whose premise is photographing receipts with a phone.
+**Vestigial root package.** The repo root has a `package.json` (axios plus vite
+scripts, but no vite dependency) and its own `node_modules`, left from before the
+frontend moved into `receipt-parser-frontend/`. Netlify builds from the
+subdirectory, so it is unused — but it produces a second lockfile and invites
+confusion about which directory to run npm in.
 
-**Repo hygiene.** `package-lock.json` is gitignored, so frontend builds are not
-reproducible on Netlify. (`backend/__pycache__` was tracked despite being
-gitignored; it has been removed from the working tree but the deletion still
-needs committing.)
-
-**Orphaned endpoint.** `GET /status` requires a signature but has no
-`netlify.toml` route, so it is unreachable from the browser. Harmless; add a
-proxy rule or drop it.
+**Unverified rendering.** The theme tokens compile and no component hardcodes a
+colour, but the dark-mode contrast and the sub-900px layout have not been looked
+at in a browser.

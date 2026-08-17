@@ -261,17 +261,6 @@ def normalize_output(raw_json):
     return {"store": "", "date": "", "total": total, "items": items}
 
 
-@app.function(image=inference_image)
-def get_status():
-    gpu = torch.cuda.is_available()
-    return {
-        "status": "ready",
-        "gpu": gpu,
-        "device": "cuda" if gpu else "cpu",
-        "model": MODEL_NAME,
-    }
-
-
 @app.function(
     image=inference_image,
     gpu="any",

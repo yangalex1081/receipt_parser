@@ -15,10 +15,9 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Lock files
-package-lock.json
-pnpm-lock.yaml
-yarn.lock
+# Lock files are deliberately NOT ignored — committing them is what makes
+# Netlify builds reproducible. Without one, every deploy re-resolves semver
+# ranges and can pick up a different dependency tree than you tested against.
 
 # Vite / Netlify
 .netlify/

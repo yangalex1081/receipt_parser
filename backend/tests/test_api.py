@@ -55,7 +55,6 @@ live = pytest.mark.skipif(
 )
 
 SIGNED_ROUTES = [
-    ("get", "/status"),
     ("get", "/result/fc-TEST123"),
     ("post", "/parse"),
 ]
@@ -77,11 +76,6 @@ class FakeProcessReceipt:
     def spawn(self, *args, **kwargs):
         self.spawn_calls.append((args, kwargs))
         return FakeCall()
-
-
-class FakeGetStatus:
-    def remote(self, *args, **kwargs):
-        return {"status": "ready", "gpu": False, "device": "cpu", "model": "donut"}
 
 
 class FakeFunctionCall:
@@ -125,7 +119,6 @@ def gw(monkeypatch):
     import gateway
 
     monkeypatch.setattr(gateway, "process_receipt", FakeProcessReceipt())
-    monkeypatch.setattr(gateway, "get_status", FakeGetStatus())
     monkeypatch.setattr(gateway.modal, "FunctionCall", FakeFunctionCall)
     monkeypatch.setattr(gateway, "NETLIFY_SIGN_SECRET", TEST_SECRET)
     FakeFunctionCall.mode = "pending"
@@ -231,7 +224,7 @@ def test_500_when_server_secret_is_missing(client, gw, monkeypatch, sign):
     held the wrong key name.
     """
     monkeypatch.setattr(gw, "NETLIFY_SIGN_SECRET", None)
-    r = client.get("/status", headers=sign())
+    r = client.get("/result/fc-TEST123", headers=sign())
     assert r.status_code == 500
     assert "NETLIFY_SIGN_SECRET" in r.json()["detail"]
 
@@ -327,14 +320,8 @@ def test_result_job_failure(client, sign):
 
 
 # ==========================================================================
-# OFFLINE — GET /status and the response contract
+# OFFLINE — response contract
 # ==========================================================================
-
-def test_status_returns_device_info(client, sign):
-    r = client.get("/status", headers=sign())
-    assert r.status_code == 200
-    assert r.json()["status"] == "ready"
-
 
 def test_result_shape_matches_frontend_expectations(client, sign):
     """ReceiptTable reads result.items[].{name,qty,price}; keep them in sync."""
@@ -388,7 +375,7 @@ def test_live_modal_rejects_unsigned_requests():
 @live
 def test_live_modal_rejects_forged_signature():
     r = httpx.get(
-        f"{MODAL}/status", headers={"x-nf-sign": "forged.token.here"}, timeout=TIMEOUT
+        f"{MODAL}/result/fc-nope", headers={"x-nf-sign": "forged.token.here"}, timeout=TIMEOUT
     )
     assert r.status_code == 401, f"expected 401, got {r.status_code}: {r.text[:200]}"
 

@@ -18,7 +18,7 @@ from fastapi import Depends, Header, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import SECRET_NAME, app, gateway_image
-from funcs import get_status, process_receipt
+from funcs import process_receipt
 
 web_app = fastapi.FastAPI()
 
@@ -75,12 +75,6 @@ def verify_netlify_signature(x_nf_sign: str = Header(default=None)):
 @web_app.get("/health")
 async def health():
     return {"status": "ok", "message": "Receipt Parser API healthy"}
-
-
-# Reaches into a GPU-image container, so this one is not free.
-@web_app.get("/status")
-async def status(_claims: dict = Depends(verify_netlify_signature)):
-    return get_status.remote()
 
 
 # Kick off a parse. Returns immediately with a call id — the GPU job can take
