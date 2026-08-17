@@ -61,11 +61,13 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
     return map;
   }, [items]);
 
-  // What the parser reported, for comparison against the edited rows.
-  const parsedTotal = Array.isArray(parsedData) ? null : parsedData?.total;
-  const totalsDisagree =
-    typeof parsedTotal === "number" &&
-    Math.abs(parsedTotal - totalAmount) > 0.005;
+  // The total printed on the receipt itself, when the parser could read it.
+  // A gap between that and the sum of the rows usually means a line was
+  // missed — the most common extraction failure — so it is worth showing.
+  const printedTotal = Array.isArray(parsedData) ? null : parsedData?.printed_total;
+  const hasPrintedTotal = typeof printedTotal === "number" && printedTotal > 0;
+  const difference = hasPrintedTotal ? printedTotal - totalAmount : 0;
+  const totalsDisagree = hasPrintedTotal && Math.abs(difference) > 0.005;
 
   // --- Rendering -----------------------------------------------------------
 
@@ -173,8 +175,17 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
                 <td colSpan="5" className="total-row">
                   <strong>Total: ${totalAmount.toFixed(2)}</strong>
                   {totalsDisagree && (
-                    <span className="total-mismatch">
-                      (receipt said ${parsedTotal.toFixed(2)})
+                    <span
+                      className="total-mismatch"
+                      title={
+                        difference > 0
+                          ? "The receipt total is higher than these rows — a line may be missing."
+                          : "These rows exceed the receipt total — a line may be duplicated."
+                      }
+                    >
+                      ⚠ receipt says ${printedTotal.toFixed(2)} (
+                      {difference > 0 ? "+" : "−"}$
+                      {Math.abs(difference).toFixed(2)} unaccounted)
                     </span>
                   )}
                 </td>

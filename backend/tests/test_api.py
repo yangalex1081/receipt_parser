@@ -425,3 +425,72 @@ def test_live_full_parse_round_trip():
             return
 
     pytest.fail("parse did not finish within 150s")
+
+
+# ==========================================================================
+# OFFLINE — normalize_output
+#
+# Pure function, no GPU: feed it CORD-shaped payloads and check the schema the
+# frontend consumes. This is where extraction regressions surface cheapest.
+# ==========================================================================
+
+@pytest.fixture
+def normalize():
+    import funcs
+
+    return funcs.normalize_output.local
+
+
+CORD_SAMPLE = {
+    "menu": [
+        {"nm": "ICE BLACKCOFFEE", "cnt": "2 x", "unitprice": "2,500", "price": "5,000"},
+        {"nm": "MUFFIN", "cnt": "3", "price": "9,000"},
+    ],
+    "sub_total": {"subtotal_price": "14,000", "tax_price": "1,400"},
+    "total": {"total_price": "15,400", "cashprice": "20,000", "changeprice": "4,600"},
+}
+
+
+def test_normalize_extracts_items(normalize):
+    out = normalize(CORD_SAMPLE)
+    assert [i["name"] for i in out["items"]] == ["Ice Blackcoffee", "Muffin"]
+    assert out["items"][0]["qty"] == 2          # "2 x" -> 2
+    assert out["items"][0]["price"] == 5000.0   # comma stripped
+    assert out["items"][0]["unit_price"] == 2500.0
+
+
+def test_normalize_captures_printed_total(normalize):
+    """The receipt's own total is a cross-check, not an item — keep it."""
+    out = normalize(CORD_SAMPLE)
+    assert out["printed_total"] == 15400.0
+    assert out["line_sum"] == 14000.0
+    assert out["total"] == 15400.0
+
+
+def test_normalize_totals_group_is_not_an_item(normalize):
+    """A regression guard: sub_total/total must never become table rows."""
+    names = [i["name"] for i in normalize(CORD_SAMPLE)["items"]]
+    assert not any(n.lower().startswith(("sub", "total", "cash", "change")) for n in names)
+
+
+def test_normalize_falls_back_to_line_sum(normalize):
+    """With no printed total, `total` is the sum of the rows."""
+    out = normalize({"menu": [{"nm": "TEA", "cnt": "1", "price": "3.50"}]})
+    assert out["printed_total"] is None
+    assert out["total"] == 3.5
+    assert out["line_sum"] == 3.5
+
+
+def test_normalize_survives_junk(normalize):
+    """Donut can emit a bare string or nothing useful; never raise."""
+    for junk in ["", "not json at all", {}, [], {"text_sequence": "garbage"}]:
+        out = normalize(junk)
+        assert out["items"] == []
+        assert out["total"] == 0
+
+
+def test_normalize_output_shape_is_stable(normalize):
+    """ReceiptTable reads these keys; adding is fine, removing is not."""
+    out = normalize(CORD_SAMPLE)
+    assert set(out) >= {"store", "date", "total", "line_sum", "printed_total", "items"}
+    assert set(out["items"][0]) >= {"name", "qty", "price"}

@@ -19,41 +19,19 @@ with inference_image.imports():
     import cv2  # noqa: F401  (loaded for libgl parity with prior image)
     import numpy as np  # noqa: F401
     import torch
-    from PIL import Image, ImageEnhance, ImageFilter
+    from PIL import Image, ImageOps
     from transformers import DonutProcessor, VisionEncoderDecoderModel
 
-# Declare the prompt DONUT should use
-PROMPT = """<s_cord-v2>
-You are reading a receipt and must extract the purchased items.
-
-Return the result as a JSON object with a single key "menu".
-Each element in "menu" must have:
-- "nm" for the item name,
-- "cnt" for the quantity,
-- "price" for the item price.
-
-Do not include store name, date, total, or extra explanations.
-
-### Example 1
-{
-  "menu": [
-    {"nm": "ICE BLACKCOFFEE", "cnt": "2", "price": "5000"},
-    {"nm": "LATTE", "cnt": "1", "price": "4500"},
-    {"nm": "MUFFIN", "cnt": "3", "price": "9000"}
-  ]
-}
-
-### Example 2
-{
-  "menu": [
-    {"nm": "NASI GORENG", "cnt": "1", "price": "42000"},
-    {"nm": "ICED TEA", "cnt": "2", "price": "12000"},
-    {"nm": "CHICKEN SATAY", "cnt": "1", "price": "38000"}
-  ]
-}
-
-Now extract and return only the JSON result for this receipt:
-<s_answer>"""
+# The task-start token, and nothing else.
+#
+# Donut is not an instruction-following LLM — it is a Swin encoder plus a BART
+# decoder fine-tuned so that this single token makes the decoder emit CORD
+# structure. Natural-language instructions and few-shot examples are not
+# understood; they are tokenized and fed in as decoder context the model never
+# saw in training, which derails generation. An earlier prompt here expanded to
+# 326 decoder tokens (3 of them <unk>) instead of this one, and produced empty
+# or nameless items.
+PROMPT = "<s_cord-v2>"
 
 
 @lru_cache(maxsize=1)
@@ -69,34 +47,33 @@ def setup():
     return processor, model, device
 
 
-# Func to preprocess receipt
 @app.function(image=inference_image)
 def preprocess_image(image_bytes: bytes) -> bytes:
-    """
-    Light, Donut-friendly preprocessing:
-      - Keep RGB
-      - Optional gentle contrast stretch
-      - Resize (preserve aspect ratio)
-      - Mild sharpening
-    """
-    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    """Minimal, orientation-correcting preprocessing.
 
-    # 1️⃣ Gentle contrast — 1.2x instead of 2.0x
-    enhancer = ImageEnhance.Contrast(image)
-    image = enhancer.enhance(1.8)
+    DonutProcessor already resizes and normalizes to what the model expects, so
+    there is little to gain here and real damage to be done: contrast pushes and
+    unsharp masks alter the glyph shapes the encoder was trained on.
 
-    # 2️⃣ Resize — ensure longest side ≤ 1280px
-    max_size = 1280
+    What does matter is EXIF orientation. Phone cameras record rotation in
+    metadata rather than rotating pixels, and PIL does not apply it — so a
+    receipt photographed in portrait can reach the model sideways. That alone
+    can empty out a parse.
+    """
+    image = Image.open(io.BytesIO(image_bytes))
+
+    # Apply the EXIF rotation before dropping the metadata via convert().
+    image = ImageOps.exif_transpose(image)
+    image = image.convert("RGB")
+
+    # Cap the long edge. Donut resizes to 2560x1920 internally; feeding a 12MP
+    # phone photo just costs transfer and memory.
+    max_size = 1920
     w, h = image.size
     scale = min(max_size / max(w, h), 1.0)
     if scale < 1.0:
-        new_size = (int(w * scale), int(h * scale))
-        image = image.resize(new_size, Image.Resampling.LANCZOS)
+        image = image.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
 
-    # 3️⃣ Mild sharpening — avoids over-edge artifacts
-    image = image.filter(ImageFilter.UnsharpMask(radius=0.8, percent=100, threshold=3))
-
-    # Save
     buf = io.BytesIO()
     image.save(buf, format="PNG")
     return buf.getvalue()
@@ -256,9 +233,42 @@ def normalize_output(raw_json):
             item["unit_price"] = to_float(unit_price)
         items.append(item)
 
+    # --- Step 4: The receipt's own printed total ---
+    #
+    # CORD puts this in a separate group, so it never appears among the menu
+    # items. It is worth surfacing rather than discarding: comparing it against
+    # the sum of extracted lines is what reveals a missed item, which is the
+    # most common extraction failure. The frontend shows the discrepancy.
+    printed_total = None
+    if isinstance(raw_json, dict):
+        for group_key, value_keys in (
+            ("total", ("total_price", "creditcardprice", "cashprice")),
+            ("sub_total", ("subtotal_price",)),
+        ):
+            group = raw_json.get(group_key)
+            if isinstance(group, dict):
+                for k in value_keys:
+                    if group.get(k) not in (None, ""):
+                        printed_total = to_float(group[k])
+                        break
+            elif group not in (None, "") and not isinstance(group, list):
+                printed_total = to_float(group)
+            if printed_total:
+                break
+
     # Sum of line totals — deliberately not price * qty, see above.
-    total = sum(i["price"] for i in items)
-    return {"store": "", "date": "", "total": total, "items": items}
+    line_sum = sum(i["price"] for i in items)
+
+    # `total` is what the receipt says when we could read it, falling back to
+    # the line sum. `line_sum` is always the sum of the rows below it.
+    return {
+        "store": "",
+        "date": "",
+        "total": printed_total if printed_total else line_sum,
+        "line_sum": line_sum,
+        "printed_total": printed_total,
+        "items": items,
+    }
 
 
 @app.function(
