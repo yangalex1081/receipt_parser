@@ -37,14 +37,19 @@ const HealthCheck = () => {
   };
 
   return (
-    <div style={{ marginTop: 20 }}>
-      <button onClick={handleHealthCheck} disabled={loading}>
-        {loading ? "Checking..." : "Check API Health"}
+    <div>
+      <button
+        type="button"
+        onClick={handleHealthCheck}
+        disabled={loading}
+        className="btn"
+      >
+        {loading ? "Checking…" : "Check API Health"}
       </button>
       {response && (
-        <pre style={{ marginTop: 12, background: "#008000", padding: 12, borderRadius: 6 }}>
-          {response}
-        </pre>
+        <div className="output">
+          <pre>{response}</pre>
+        </div>
       )}
     </div>
   );

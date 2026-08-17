@@ -22,26 +22,17 @@ const App = () => {
 
   return (
     <div>
-      <div style={{ flex: 1, padding: "20px" }}>
+      <header className="app-header">
         <HealthCheck />
-      </div>
-      <div style={{ display: "flex", height: "100vh" }}>
-        {/* Left side — Upload and controls */}
-        <div style={{ flex: 1, padding: "20px" }}>
+      </header>
+
+      <div className="app-body">
+        <div className="pane">
           <h1>🧾 Receipt Parser</h1>
           <UploadForm onParsed={handleParsed} />
         </div>
 
-        {/* Right side — Table always visible */}
-        <div
-          style={{
-            width: "50%",
-            borderLeft: "1px solid #ccc",
-            padding: "20px",
-            overflowY: "auto",
-            background: "#f8f8f874",
-          }}
-        >
+        <div className="pane pane--table">
           <ReceiptTable
             parsedData={parsedData}
             onChange={setParsedData}

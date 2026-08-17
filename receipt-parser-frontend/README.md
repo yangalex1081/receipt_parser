@@ -1,16 +1,51 @@
-# React + Vite
+# Receipt Parser — frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React 19 + Vite SPA. Upload a receipt photo, get itemised lines back, assign a
+buyer to each and see per-person totals.
 
-Currently, two official plugins are available:
+## Setup
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+```bash
+npm install
+cp .env.example .env      # then paste NETLIFY_SIGN_SECRET
+npm run dev               # http://localhost:3000
+```
 
-## React Compiler
+`NETLIFY_SIGN_SECRET` must match the value in the Netlify dashboard and in the
+Modal secret. Without it, `/api/*` returns 401 and the dev server warns at
+startup.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## How the backend is reached
 
-## Expanding the ESLint configuration
+The browser only ever calls `/api/*` on its own origin and holds no
+credentials. In production Netlify proxies those to Modal and signs each
+request (see `netlify.toml`). In development `vite.config.js` mints the same
+signature, so local and deployed runs share one code path.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+Neither `NETLIFY_SIGN_SECRET` nor `MODAL_URL` carries a `VITE_` prefix, which
+is what keeps them out of the browser bundle. **Do not add one to the secret** —
+any `VITE_`-prefixed value is inlined into the public JS.
+
+## Scripts
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | Dev server on :3000 with the signing proxy |
+| `npm run build` | Production build to `dist/` |
+| `npm run preview` | Serve the build locally (no `/api` proxy) |
+| `npm run lint` | ESLint |
+
+## Layout
+
+```
+src/
+  App.jsx                    layout; owns parsed data + a pristine copy
+  components/
+    UploadForm.jsx           select, downscale, upload, poll for the result
+    ReceiptTable.jsx         editable rows, per-buyer totals
+    HealthCheck.jsx          calls /api/health
+  index.css                  theme tokens and base styles
+```
+
+Full system design, including the auth model and deploy steps, is in
+[`../ARCHITECTURE.md`](../ARCHITECTURE.md).

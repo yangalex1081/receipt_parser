@@ -1,21 +1,5 @@
 import React, { useMemo } from "react";
 
-const inputStyle = {
-  width: "100%",
-  background: "transparent",
-  border: "none",
-  borderBottom: "1px solid #ddd",
-  color: "#333",
-};
-
-const buttonStyle = {
-  padding: "8px 12px",
-  color: "white",
-  border: "none",
-  borderRadius: "4px",
-  cursor: "pointer",
-};
-
 /**
  * Fully controlled: rows are rendered straight from `parsedData` and every
  * change goes up through `onChange`. There is deliberately no local copy of
@@ -52,7 +36,7 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
     emit(items.filter((_, i) => i !== index));
   };
 
-  const handleReset = () => emit([]);
+  const handleClear = () => emit([]);
 
   // --- Totals --------------------------------------------------------------
   //
@@ -86,149 +70,132 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
   // --- Rendering -----------------------------------------------------------
 
   return (
-    <div style={{ color: "#222" }}>
-      <h2 style={{ marginBottom: "10px" }}>Receipt Items</h2>
+    <div>
+      <h2>Receipt Items</h2>
 
-      {/* Controls */}
-      <div style={{ marginBottom: "10px" }}>
+      <div className="controls">
         {canRestore && (
           <button
             type="button"
             onClick={onRestore}
-            style={{ ...buttonStyle, marginRight: "8px", backgroundColor: "#0070f3" }}
+            className="btn btn--primary"
             title="Discard edits and restore the original parsed items"
           >
             🔄 Restore Parsed Items
           </button>
         )}
 
-        <button
-          type="button"
-          onClick={handleReset}
-          style={{ ...buttonStyle, backgroundColor: "#d9534f" }}
-        >
+        <button type="button" onClick={handleClear} className="btn btn--danger">
           ♻️ Clear
         </button>
       </div>
 
-      {/* Table */}
-      <table
-        style={{
-          borderCollapse: "collapse",
-          width: "100%",
-          backgroundColor: "transparent",
-          border: "1px solid #ccc",
-          borderRadius: "6px",
-          overflow: "hidden",
-        }}
-      >
-        <thead style={{ backgroundColor: "#f0f0f0" }}>
-          <tr>
-            <th>Name</th>
-            <th>Qty</th>
-            <th title="Total for this line, not the unit price">Amount ($)</th>
-            <th>Buyer</th>
-            <th aria-label="Remove row" />
-          </tr>
-        </thead>
-        <tbody>
-          {items.length > 0 ? (
-            items.map((item, i) => (
-              <tr key={i}>
-                <td>
-                  <input
-                    type="text"
-                    value={item.name || ""}
-                    onChange={(e) => handleEdit(i, "name", e.target.value)}
-                    style={inputStyle}
-                  />
-                </td>
-                <td>
-                  <input
-                    type="number"
-                    min="1"
-                    value={item.qty ?? 1}
-                    onChange={(e) => handleEdit(i, "qty", parseInt(e.target.value) || 1)}
-                    style={inputStyle}
-                  />
-                </td>
-                <td>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={item.price ?? 0}
-                    onChange={(e) =>
-                      handleEdit(i, "price", parseFloat(e.target.value) || 0)
-                    }
-                    style={inputStyle}
-                  />
-                </td>
-                <td>
-                  <input
-                    type="text"
-                    value={item.buyer || ""}
-                    onChange={(e) => handleEdit(i, "buyer", e.target.value)}
-                    placeholder="e.g. Alex"
-                    style={inputStyle}
-                  />
-                </td>
-                <td style={{ width: "1%" }}>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveRow(i)}
-                    aria-label={`Remove ${item.name || "row"}`}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: "#999",
-                      cursor: "pointer",
-                      padding: "0 6px",
-                    }}
-                  >
-                    ✕
-                  </button>
+      <div className="table-scroll">
+        <table className="receipt-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Qty</th>
+              <th title="Total for this line, not the unit price">Amount ($)</th>
+              <th>Buyer</th>
+              <th aria-label="Remove row" />
+            </tr>
+          </thead>
+          <tbody>
+            {items.length > 0 ? (
+              items.map((item, i) => (
+                <tr key={i}>
+                  <td>
+                    <input
+                      type="text"
+                      className="cell-input"
+                      value={item.name || ""}
+                      onChange={(e) => handleEdit(i, "name", e.target.value)}
+                      aria-label={`Item ${i + 1} name`}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="number"
+                      className="cell-input"
+                      min="1"
+                      value={item.qty ?? 1}
+                      onChange={(e) => handleEdit(i, "qty", parseInt(e.target.value) || 1)}
+                      aria-label={`Item ${i + 1} quantity`}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="number"
+                      className="cell-input"
+                      min="0"
+                      step="0.01"
+                      value={item.price ?? 0}
+                      onChange={(e) =>
+                        handleEdit(i, "price", parseFloat(e.target.value) || 0)
+                      }
+                      aria-label={`Item ${i + 1} amount`}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="text"
+                      className="cell-input"
+                      value={item.buyer || ""}
+                      onChange={(e) => handleEdit(i, "buyer", e.target.value)}
+                      placeholder="e.g. Alex"
+                      aria-label={`Item ${i + 1} buyer`}
+                    />
+                  </td>
+                  <td style={{ width: "1%" }}>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveRow(i)}
+                      className="btn btn--icon"
+                      aria-label={`Remove ${item.name || `item ${i + 1}`}`}
+                    >
+                      ✕
+                    </button>
+                  </td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td colSpan="5" className="table-empty">
+                  No items yet
                 </td>
               </tr>
-            ))
-          ) : (
-            <tr>
-              <td colSpan="5" style={{ textAlign: "center", color: "#888" }}>
-                No items yet
-              </td>
-            </tr>
+            )}
+          </tbody>
+          {items.length > 0 && (
+            <tfoot>
+              <tr>
+                <td colSpan="5" className="total-row">
+                  <strong>Total: ${totalAmount.toFixed(2)}</strong>
+                  {totalsDisagree && (
+                    <span className="total-mismatch">
+                      (receipt said ${parsedTotal.toFixed(2)})
+                    </span>
+                  )}
+                </td>
+              </tr>
+              {Object.entries(totalsByBuyer).map(([buyer, total]) => (
+                <tr key={buyer}>
+                  <td colSpan="5" className="buyer-row">
+                    {buyer}: ${total.toFixed(2)}
+                  </td>
+                </tr>
+              ))}
+            </tfoot>
           )}
-        </tbody>
-        {items.length > 0 && (
-          <tfoot style={{ backgroundColor: "#fafafa" }}>
-            <tr>
-              <td colSpan="5" style={{ borderTop: "1px solid #ccc", padding: "8px" }}>
-                <strong>Total: ${totalAmount.toFixed(2)}</strong>
-                {totalsDisagree && (
-                  <span
-                    style={{ marginLeft: "10px", color: "#b8860b", fontWeight: "normal" }}
-                  >
-                    (receipt said ${parsedTotal.toFixed(2)})
-                  </span>
-                )}
-              </td>
-            </tr>
-            {Object.entries(totalsByBuyer).map(([buyer, total]) => (
-              <tr key={buyer}>
-                <td colSpan="5" style={{ paddingLeft: "16px", color: "#444" }}>
-                  {buyer}: ${total.toFixed(2)}
-                </td>
-              </tr>
-            ))}
-          </tfoot>
-        )}
-      </table>
+        </table>
+      </div>
 
-      {/* Add row */}
       <button
         type="button"
         onClick={handleAddRow}
-        style={{ ...buttonStyle, marginTop: "12px", backgroundColor: "#28a745" }}
+        className="btn btn--success"
+        style={{ marginTop: "12px" }}
       >
         ➕ Add Item
       </button>

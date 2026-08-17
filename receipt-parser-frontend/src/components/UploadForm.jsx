@@ -174,8 +174,8 @@ const UploadForm = ({ onParsed }) => {
   };
 
   return (
-    <div style={{ maxWidth: "500px", margin: "auto", textAlign: "center" }}>
-      <h2>Receipt Parser</h2>
+    <div className="upload">
+      <h2>Upload a receipt</h2>
 
       <form onSubmit={handleSubmit}>
         <input
@@ -186,18 +186,10 @@ const UploadForm = ({ onParsed }) => {
         />
 
         {preview && (
-          <div style={{ marginTop: "20px" }}>
-            <img
-              src={preview}
-              alt="Receipt Preview"
-              style={{
-                maxWidth: "100%",
-                borderRadius: "8px",
-                boxShadow: "0 0 10px rgba(0,0,0,0.2)",
-              }}
-            />
+          <div className="preview">
+            <img src={preview} alt="Receipt preview" />
 
-            <button type="button" onClick={handleReset}>
+            <button type="button" onClick={handleReset} className="btn">
               Reset
             </button>
           </div>
@@ -206,47 +198,29 @@ const UploadForm = ({ onParsed }) => {
         <button
           type="submit"
           disabled={loading || !file}
-          style={{
-            marginTop: "20px",
-            padding: "10px 20px",
-            cursor: loading || !file ? "not-allowed" : "pointer",
-            borderRadius: "6px",
-            border: "none",
-            background: loading || !file ? "#8fc0f5" : "#007bff",
-            color: "white",
-            fontWeight: "bold",
-          }}
+          className="btn btn--primary"
+          style={{ marginTop: "20px" }}
         >
           {loading ? "Processing…" : "Upload & Parse"}
         </button>
       </form>
 
       {status && (
-        <p style={{ marginTop: "12px", color: "#555" }} aria-live="polite">
+        <p className="status-line" aria-live="polite">
           {status}
         </p>
       )}
 
       {error && (
-        <p style={{ marginTop: "12px", color: "#d9534f" }} role="alert">
+        <p className="error-line" role="alert">
           {error}
         </p>
       )}
 
       {result && (
-        <div style={{ marginTop: "30px", textAlign: "left" }}>
-          <h3>Parsed Output</h3>
-          <pre
-            style={{
-              background: "#f4f4f4",
-              color: "#222",
-              padding: "15px",
-              borderRadius: "8px",
-              overflowX: "auto",
-            }}
-          >
-            {JSON.stringify(result, null, 2)}
-          </pre>
+        <div className="output">
+          <h3>Parsed output</h3>
+          <pre>{JSON.stringify(result, null, 2)}</pre>
         </div>
       )}
     </div>
