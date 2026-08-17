@@ -1,0 +1,4 @@
+# Test-only dependencies. Not installed into either Modal image.
+#   pip install -r backend/requirements-dev.txt
+httpx==0.28.1
+pytest==9.1.1
