@@ -102,6 +102,8 @@ class FakeFunctionCall:
             "store": "Test Mart",
             "date": "2026-08-14",
             "total": 15.00,
+            "line_sum": 15.00,
+            "printed_total": 15.00,
             "items": [
                 {"name": "Apples", "qty": 3, "price": 9.00},
                 {"name": "Latte", "qty": 2, "price": 6.00},
@@ -292,9 +294,9 @@ def test_result_done_returns_payload(client, sign):
 def test_price_is_a_line_total_not_a_unit_price(client, sign):
     """Pins the schema both sides depend on.
 
-    CORD's `price` is the total for the row, so the receipt total is
-    sum(price). If anything starts multiplying by qty, this fails: the
-    qty-weighted sum here would be 39.00, not 15.00.
+    `price` is the total for the row, so the receipt total is sum(price). If
+    anything starts multiplying by qty, this fails: the qty-weighted sum here
+    would be 39.00, not 15.00.
     """
     FakeFunctionCall.mode = "done"
     result = client.get("/result/fc-TEST123", headers=sign()).json()["result"]
@@ -324,10 +326,11 @@ def test_result_job_failure(client, sign):
 # ==========================================================================
 
 def test_result_shape_matches_frontend_expectations(client, sign):
-    """ReceiptTable reads result.items[].{name,qty,price}; keep them in sync."""
+    """ReceiptTable reads result.printed_total and result.items[].{name,qty,price};
+    keep them in sync."""
     FakeFunctionCall.mode = "done"
     result = client.get("/result/fc-TEST123", headers=sign()).json()["result"]
-    assert set(result) >= {"store", "date", "total", "items"}
+    assert set(result) >= {"store", "date", "total", "printed_total", "items"}
     assert set(result["items"][0]) >= {"name", "qty", "price"}
 
 
@@ -401,7 +404,13 @@ def test_live_result_endpoint_is_signed_by_netlify():
     reason="costs a GPU invocation; set RUN_LIVE_PARSE=1",
 )
 def test_live_full_parse_round_trip():
-    """Upload -> poll -> result, the way the browser does it."""
+    """Upload -> poll -> result, the way the browser does it.
+
+    This is the only test that exercises the model itself. It asserts the
+    contract rather than the content — a VLM's exact reading of a photo is not
+    a stable thing to assert on — but an empty item list means the parse
+    failed, which is the regression that matters.
+    """
     photo = BACKEND.parent / "test_photos" / "sample21.jpg"
     if not photo.exists():
         pytest.skip("no sample receipt available")
@@ -421,7 +430,11 @@ def test_live_full_parse_round_trip():
         assert poll.status_code == 200, f"{poll.status_code}: {poll.text[:200]}"
         body = poll.json()
         if body["status"] == "done":
-            assert "items" in body["result"]
+            result = body["result"]
+            assert set(result) >= {"store", "date", "total", "printed_total", "items"}
+            assert result["items"], "model returned no line items"
+            assert set(result["items"][0]) >= {"name", "qty", "price"}
+            assert all(i["name"] for i in result["items"]), "nameless line item"
             return
 
     pytest.fail("parse did not finish within 150s")
@@ -430,8 +443,14 @@ def test_live_full_parse_round_trip():
 # ==========================================================================
 # OFFLINE — normalize_output
 #
-# Pure function, no GPU: feed it CORD-shaped payloads and check the schema the
-# frontend consumes. This is where extraction regressions surface cheapest.
+# Pure function, no GPU: feed it the strings Qwen3-VL actually emits and check
+# the schema the frontend consumes. This is where extraction regressions
+# surface cheapest.
+#
+# The input is now a *string* rather than Donut's decoded dict, because a
+# generative model returns text. Everything below is a plausible reply, not a
+# hypothetical one: the fences, the preamble, the hallucinated TOTAL row and
+# the currency symbols are all things a VLM does.
 # ==========================================================================
 
 @pytest.fixture
@@ -441,56 +460,129 @@ def normalize():
     return funcs.normalize_output.local
 
 
-CORD_SAMPLE = {
-    "menu": [
-        {"nm": "ICE BLACKCOFFEE", "cnt": "2 x", "unitprice": "2,500", "price": "5,000"},
-        {"nm": "MUFFIN", "cnt": "3", "price": "9,000"},
-    ],
-    "sub_total": {"subtotal_price": "14,000", "tax_price": "1,400"},
-    "total": {"total_price": "15,400", "cashprice": "20,000", "changeprice": "4,600"},
-}
+QWEN_REPLY = """{
+  "store": "PARKNSHOP",
+  "date": "2026-08-14",
+  "total": 88.50,
+  "items": [
+    {"name": "ICE BLACKCOFFEE", "qty": 2, "price": 50.00},
+    {"name": "MUFFIN", "qty": 3, "price": 38.50}
+  ]
+}"""
 
 
-def test_normalize_extracts_items(normalize):
-    out = normalize(CORD_SAMPLE)
+def test_normalize_extracts_the_full_schema(normalize):
+    """store and date are real fields now — CORD-v2 had nowhere to put them."""
+    out = normalize(QWEN_REPLY)
+    assert out["store"] == "PARKNSHOP"
+    assert out["date"] == "2026-08-14"
     assert [i["name"] for i in out["items"]] == ["Ice Blackcoffee", "Muffin"]
-    assert out["items"][0]["qty"] == 2          # "2 x" -> 2
-    assert out["items"][0]["price"] == 5000.0   # comma stripped
-    assert out["items"][0]["unit_price"] == 2500.0
+    assert out["items"][0]["qty"] == 2
+    assert out["items"][0]["price"] == 50.0
+
+
+def test_normalize_strips_markdown_fences(normalize):
+    """The prompt forbids fences. Models emit them anyway."""
+    out = normalize("```json\n" + QWEN_REPLY + "\n```")
+    assert out["store"] == "PARKNSHOP"
+    assert len(out["items"]) == 2
+
+
+def test_normalize_recovers_json_from_commentary(normalize):
+    """Same for a chatty preamble — take the first JSON object and move on."""
+    out = normalize("Sure! Here is the receipt:\n\n" + QWEN_REPLY + "\n\nLet me know!")
+    assert out["total"] == 88.5
+    assert len(out["items"]) == 2
 
 
 def test_normalize_captures_printed_total(normalize):
     """The receipt's own total is a cross-check, not an item — keep it."""
-    out = normalize(CORD_SAMPLE)
-    assert out["printed_total"] == 15400.0
-    assert out["line_sum"] == 14000.0
-    assert out["total"] == 15400.0
+    out = normalize(QWEN_REPLY)
+    assert out["printed_total"] == 88.5
+    assert out["line_sum"] == 88.5
+    assert out["total"] == 88.5
 
 
-def test_normalize_totals_group_is_not_an_item(normalize):
-    """A regression guard: sub_total/total must never become table rows."""
-    names = [i["name"] for i in normalize(CORD_SAMPLE)["items"]]
-    assert not any(n.lower().startswith(("sub", "total", "cash", "change")) for n in names)
+def test_normalize_price_is_a_line_total(normalize):
+    """The single load-bearing convention in the whole schema.
+
+    "3 MUFFIN @ 12.83" prints 38.50 on the line, and that is what `price`
+    holds. The frontend sums the column as-is, so if this ever became a unit
+    price every multi-quantity receipt would silently under-report.
+    """
+    out = normalize(QWEN_REPLY)
+    assert out["line_sum"] == sum(i["price"] for i in out["items"])
+    assert out["line_sum"] != sum(i["price"] * i["qty"] for i in out["items"])
+
+
+def test_normalize_drops_hallucinated_summary_rows(normalize):
+    """A generative model will list TOTAL as an item however firmly it is told
+    not to. Left in, it double-counts into line_sum and fakes a clean match."""
+    out = normalize(
+        """{"total": 88.50, "items": [
+             {"name": "MUFFIN", "qty": 3, "price": 38.50},
+             {"name": "ICE BLACKCOFFEE", "qty": 2, "price": 50.00},
+             {"name": "Subtotal", "qty": 1, "price": 80.00},
+             {"name": "TAX", "qty": 1, "price": 8.50},
+             {"name": "TOTAL", "qty": 1, "price": 88.50}]}"""
+    )
+    assert [i["name"] for i in out["items"]] == ["Muffin", "Ice Blackcoffee"]
+    assert out["line_sum"] == 88.5
+
+
+def test_normalize_keeps_items_that_merely_look_like_summaries(normalize):
+    """The filter matches whole names only. "Total Wine" is a shop, "Tax
+    Service Fee" is a line item, and dropping either would lose real money."""
+    out = normalize(
+        '{"items": [{"name": "TOTAL WINE MERLOT", "qty": 1, "price": 15.00},'
+        ' {"name": "Taxi", "qty": 1, "price": 22.00}]}'
+    )
+    assert [i["name"] for i in out["items"]] == ["Total Wine Merlot", "Taxi"]
+    assert out["line_sum"] == 37.0
+
+
+def test_normalize_coerces_messy_numbers(normalize):
+    """Bare numbers are demanded; currency symbols and separators arrive."""
+    out = normalize(
+        '{"total": "HK$1,250.00", "items":'
+        ' [{"name": "Tea", "qty": "2 x", "price": "$1,250.00"}]}'
+    )
+    assert out["items"][0]["qty"] == 2
+    assert out["items"][0]["price"] == 1250.0
+    assert out["printed_total"] == 1250.0
 
 
 def test_normalize_falls_back_to_line_sum(normalize):
-    """With no printed total, `total` is the sum of the rows."""
-    out = normalize({"menu": [{"nm": "TEA", "cnt": "1", "price": "3.50"}]})
+    """With no readable printed total, `total` is the sum of the rows."""
+    out = normalize('{"store": "", "date": "", "total": 0, "items":'
+                    ' [{"name": "TEA", "qty": 1, "price": "3.50"}]}')
     assert out["printed_total"] is None
     assert out["total"] == 3.5
     assert out["line_sum"] == 3.5
 
 
+def test_normalize_preserves_mixed_case_names(normalize):
+    """All-caps is printer shouting and gets title-cased; anything the model
+    already capitalised deliberately is left alone."""
+    out = normalize(
+        '{"items": [{"name": "iPhone 17 case", "qty": 1, "price": 199},'
+        ' {"name": "MCDONALD\'S FRIES", "qty": 1, "price": 12}]}'
+    )
+    assert [i["name"] for i in out["items"]] == ["iPhone 17 case", "Mcdonald's Fries"]
+
+
 def test_normalize_survives_junk(normalize):
-    """Donut can emit a bare string or nothing useful; never raise."""
-    for junk in ["", "not json at all", {}, [], {"text_sequence": "garbage"}]:
+    """The model can refuse, ramble, or return an empty string; never raise."""
+    for junk in ["", "not json at all", "I cannot read this receipt.", "{", "[]",
+                 "```json\n{bad json}\n```", {}, [], None]:
         out = normalize(junk)
         assert out["items"] == []
         assert out["total"] == 0
+        assert out["store"] == ""
 
 
 def test_normalize_output_shape_is_stable(normalize):
     """ReceiptTable reads these keys; adding is fine, removing is not."""
-    out = normalize(CORD_SAMPLE)
+    out = normalize(QWEN_REPLY)
     assert set(out) >= {"store", "date", "total", "line_sum", "printed_total", "items"}
     assert set(out["items"][0]) >= {"name", "qty", "price"}

@@ -21,16 +21,16 @@ This is a personal project that I made since I got annoyed at manually typing ou
 ### **Backend**
 - **Modal** — serverless Python backend.  
 - **FastAPI** — image upload and inference routing.  
-- **HuggingFace Donut** — OCR + structured text extraction.  
-- **OpenCV + Pillow** — image preprocessing (contrast, grayscale, denoising).
+- **Qwen3-VL-4B-Instruct** — vision-language model, prompted for structured JSON.  
+- **Pillow** — image preprocessing (EXIF orientation, resize).
 
 ---
 
 ## How It Works
 
 1. **Upload a photo** of your receipt.  
-2. **Backend preprocessing** enhances image contrast and readability.  
-3. **The Donut model** extracts items as structured JSON.  
+2. **Backend preprocessing** corrects orientation and resizes the photo.  
+3. **Qwen3-VL** reads the receipt and returns items as structured JSON.  
 4. **Frontend UI** displays an editable table where you can:
    - Edit item names, prices, or quantities.
    - Assign people to each item.

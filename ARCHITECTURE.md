@@ -2,7 +2,7 @@
 
 A receipt photo goes in, structured line items come out. Two deployables: a React
 SPA on Netlify, and a single Modal app holding both the FastAPI gateway and the
-GPU inference functions (Donut).
+GPU inference functions (Qwen3-VL).
 
 ---
 
@@ -31,7 +31,7 @@ GPU inference functions (Donut).
 │  │  (slim, CPU)    │ ───────────────────▶ │  (ML, GPU)      │               │
 │  │                 │                      │                 │               │
 │  │ • verifies JWS  │                      │ preprocess ->   │               │
-│  │ • spawns jobs   │                      │ Donut ->        │               │
+│  │ • spawns jobs   │                      │ Qwen3-VL ->     │               │
 │  │ • polls results │                      │ normalize       │               │
 │  └─────────────────┘                      └─────────────────┘               │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -186,9 +186,9 @@ and ≤6MB (`400` / `413`).
 
 ### 3.4 GPU functions — `backend/funcs.py`
 
-Same Modal app, `inference_image`. Model is
-`naver-clova-ix/donut-base-finetuned-cord-v2`, cached in a Modal Volume
-(`hf-hub-cache`) mounted at `/root/models`.
+Same Modal app, `inference_image`. Model is `Qwen/Qwen3-VL-4B-Instruct`, cached
+in a Modal Volume (`hf-hub-cache`) mounted at `/root/models`, running on a
+pinned `L4`.
 
 torch, transformers, cv2, and numpy are imported inside an
 `inference_image.imports()` block rather than at module scope. Without that, the
@@ -197,10 +197,10 @@ to load the ML stack on its slim image and fail.
 
 | Function | GPU | Role |
 |---|---|---|
-| `preprocess_image` | no | Contrast ×1.8, resize ≤1280px, unsharp mask, → PNG |
-| `transcript_receipt` | yes | Donut inference, `retries=3` |
-| `normalize_output` | no | Map Donut's `nm`/`cnt`/`price` → `name`/`qty`/`price` |
-| `process_receipt` | yes | Orchestrates the three above via `.local()` |
+| `preprocess_image` | no | EXIF-correct orientation, resize ≤1920px, → PNG |
+| `transcript_receipt` | L4 | Qwen3-VL inference, greedy, `retries=3` |
+| `normalize_output` | no | Parse the model's JSON reply, coerce, cross-check totals |
+| `process_receipt` | L4 | Orchestrates the three above via `.local()` |
 
 `process_receipt` invokes the others with `.local()`, so the whole pipeline runs
 inside one GPU container rather than as three remote hops.
@@ -212,9 +212,45 @@ access to the Modal workspace.
 **Response shape:**
 
 ```json
-{ "store": "", "date": "", "total": 12.34,
+{ "store": "ParknShop", "date": "2026-08-14", "total": 12.34,
+  "line_sum": 12.34, "printed_total": 12.34,
   "items": [ { "name": "Apples", "qty": 3, "price": 5.99 } ] }
 ```
+
+`price` is the **line total** for the row, not a unit price. The frontend sums
+that column directly and never multiplies by `qty`; both sides are pinned to it
+by test.
+
+`total` is what the receipt printed when the model could read it, falling back
+to the sum of the rows. `printed_total` and `line_sum` are the two readings kept
+separate, so `ReceiptTable` can flag a disagreement — which is what a missed
+(or, with a generative model, an invented) line item looks like.
+
+#### Why Qwen3-VL rather than Donut
+
+Donut (`donut-base-finetuned-cord-v2`) was replaced, not tuned. Its decoder emits
+the CORD-v2 schema and nothing else, and that schema has no `store` or `date`
+field — those two were structurally unreachable, which is why they were
+hardcoded to `""`. It was also fine-tuned on ~1000 Indonesian receipt scans, a
+poor match for phone photos of HK and US receipts.
+
+Qwen3-VL is instruction-following, so the target schema is defined by the prompt
+rather than by a fine-tune; it covers 32 languages and tolerates blur and
+perspective far better. The costs of the swap are honest ones: ~8GB of weights
+instead of ~800MB (slower cold start), and a model that can hallucinate a row
+rather than merely miss one — which is exactly what the `printed_total` versus
+`line_sum` check exists to surface.
+
+Two things follow from the model being generative and are worth knowing before
+editing `funcs.py`:
+
+- **`PROMPT` is the schema.** There is no fine-tune backing it up. The line-total
+  rule carries a worked example because that is the one convention the frontend
+  cannot recover from if it breaks.
+- **`normalize_output` distrusts the reply.** It recovers JSON from code fences
+  and preamble, coerces currency symbols and separators, and drops rows named
+  exactly `TOTAL` / `Subtotal` / `TAX` and similar — whole-name matches only, so
+  "Total Wine Merlot" survives.
 
 ---
 
@@ -336,34 +372,52 @@ intentionally declares redirects only, so it cannot override them. It sits in
 
 ## 8. Testing
 
-No test suite is checked in. The gateway was verified by importing the real
-FastAPI app with `modal` stubbed and exercising it via `TestClient`:
+`backend/tests/test_api.py` holds everything, in two tiers:
+
+```bash
+pytest backend/tests/ -v                              # offline only (fast, free)
+RUN_LIVE=1 pytest backend/tests/ -v                   # + hit the deployment
+RUN_LIVE=1 RUN_LIVE_PARSE=1 pytest backend/tests/ -v  # + a real GPU parse
+```
+
+**Offline** stubs `modal` and touches no network. It covers the gateway —
 
 - Auth: unsigned / malformed / wrong-secret / expired / wrong-issuer / `alg=none`
   all → `401`; valid signature → `200`; `/health` stays public.
 - Upload: non-image → `400`, empty → `400`, >6MB → `413`.
 - Result: pending / done / expired (`410`) / job failure (`500`).
 
-Worth promoting into a committed `pytest` suite.
+— and `normalize_output`, which is a pure function and therefore the cheapest
+place for an extraction regression to surface. Those tests feed it the strings
+a VLM actually emits: fenced JSON, a chatty preamble, currency symbols, a
+hallucinated `TOTAL` row.
+
+**Live** hits the real Netlify site and Modal app. It tests the deployment, not
+the code: that Netlify signs, that Modal verifies, that `netlify.toml` points at
+the right URL. If offline passes but live fails, the code is fine and the deploy
+is misconfigured — that distinction is why both exist.
+
+`RUN_LIVE_PARSE=1` adds the one test that exercises the model, asserting the
+contract (items present, named, correctly keyed) rather than any specific
+reading of the photo.
 
 ---
 
 ## 9. Known issues
 
-**Extraction quality — the only substantial one left.** Live parses return
-near-empty results: `store` and `date` are always `""` (hardcoded in
-`normalize_output`), and test images returned zero or nameless items. The auth,
-transport, and frontend layers are sound; the model output is not.
+**Extraction quality — unmeasured since the model swap.** The near-empty parses
+that dominated this list had two causes, both now addressed: a 326-token
+natural-language prompt fed to Donut's decoder, which only ever wanted the bare
+`<s_cord-v2>` token, and Donut itself. `store` and `date` are extracted rather
+than hardcoded, and the printed total is captured for cross-checking. None of
+that is yet backed by numbers on real receipts — measuring it against a set of
+HK and US phone photos is the open work.
 
-Two concrete leads:
-
-- `normalize_output` **discards the receipt's printed total** — it skips any
-  dict whose keys are only `sub_total` / `total` / `tax_price` / etc. Capturing
-  CORD's `total_price` would give a real cross-check against the item sum, which
-  is what catches missed line items — the most common failure. The UI already
-  renders the mismatch; it just needs a genuine number to compare against.
-- `store` and `date` are hardcoded rather than extracted, though the prompt
-  explicitly tells the model *not* to return them.
+**Timings in §2 predate the swap.** They were measured with Donut's ~800MB of
+weights. Qwen3-VL-4B is ~8GB at bf16, so cold start will be materially longer
+(the Modal Volume cache absorbs the download, not the load), and a warm parse
+now includes generating up to 1024 decoder tokens. The numbers in that table
+need re-measuring before they mean anything.
 
 **Row keys.** `ReceiptTable` keys rows by array index. Safe while rows are only
 appended and edited, but per-row delete now exists, so removing a middle row

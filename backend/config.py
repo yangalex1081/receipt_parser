@@ -33,8 +33,21 @@ gateway_image = (
 )
 
 # --- Inference: the full ML stack -------------------------------------------
-MODEL_NAME = "naver-clova-ix/donut-base-finetuned-cord-v2"
+#
+# Qwen3-VL-4B-Instruct, replacing donut-base-finetuned-cord-v2. Donut's decoder
+# emits the CORD-v2 schema and nothing else, and that schema has no store or
+# date field — those were structurally unreachable, not a prompting problem. It
+# was also fine-tuned on Indonesian receipt scans, a poor match for phone photos
+# of HK and US receipts. A general VLM gives an arbitrary target schema, 32
+# languages, and far better tolerance of blur and perspective.
+MODEL_NAME = "Qwen/Qwen3-VL-4B-Instruct"
 MODEL_CACHE_PATH = "/root/models"
+
+# 4B at bf16 is ~8GB of weights; an L4's 24GB holds that plus vision tokens and
+# KV cache with room to spare. It is the cheapest modern GPU Modal offers
+# ($0.80/hr), and pinning it beats gpu="any", which could land on anything from
+# a T4 (no bf16, 16GB) to an H100 we would be overpaying for.
+INFERENCE_GPU = "L4"
 
 model_cache = modal.Volume.from_name("hf-hub-cache", create_if_missing=True)
 

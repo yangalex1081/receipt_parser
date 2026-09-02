@@ -1,6 +1,11 @@
-# GPU inference image — the full ML stack (Donut, torch, opencv).
+# GPU inference image — the full ML stack (Qwen3-VL, torch, opencv).
 # The gateway uses requirements-gateway.txt instead.
+#
+# transformers 4.57.1 already ships Qwen3VLForConditionalGeneration, so the
+# model swap needs no upgrade here — only qwen-vl-utils (and its `av`
+# dependency, pinned so a rebuild stays reproducible).
 accelerate==1.10.1
+av==18.1.0
 aiohappyeyeballs==2.6.1
 aiohttp==3.13.1
 aiosignal==1.4.0
@@ -52,6 +57,7 @@ python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
 python-multipart==0.0.20
 PyYAML==6.0.3
+qwen-vl-utils==0.0.14
 regex==2025.9.18
 requests==2.32.5
 rich==14.2.0
