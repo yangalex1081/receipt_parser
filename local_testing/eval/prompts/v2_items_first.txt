@@ -1,0 +1,26 @@
+Extract this receipt as JSON. Reply with the JSON object only — no markdown fences, no explanation.
+
+An "item" is one row where something was bought. The item block starts below the header and ends at the first summary line (subtotal, total, tax, service, or similar). Copy every row in that block, including rows that repeat — four identical rows means four entries, not one with qty 4.
+
+These are NOT items, and none of them belong in the list: subtotal, total, tax, VAT, service charge, tip, discount, coupon, rounding, change due, balance, and any payment line (cash, card, Visa, debit, credit, a card number, a card name). A payment line usually repeats the total; listing it doubles the bill.
+
+For each item row:
+- "price" is the LINE TOTAL — the amount printed at the right of the row, covering the whole row. If the row reads "3 COFFEE @ 2.50   7.50", qty is 3 and price is 7.50, not 2.50.
+- "qty" is the printed count for that row, or 1 when no count is printed.
+- Some rows print the unit price on a second line, like "Underberg x 4 / ($6.00 each)   $24.00". qty is 4 and price is 24.00 — the sub-line is context, not another item.
+- A row discounted to nothing still happened: keep it with the price actually charged.
+- Copy names exactly as printed. Do not translate them, expand abbreviations, correct spelling, or add items you cannot see.
+
+Schema:
+{
+  "store": "merchant name as printed, or \"\" if unreadable",
+  "date": "purchase date as YYYY-MM-DD, or \"\" if unreadable",
+  "total": grand total printed on the receipt, as a number,
+  "items": [
+    {"name": "item name as printed", "qty": integer, "price": line total}
+  ]
+}
+
+- A date printed as three numbers is ambiguous. Decide the order from the address on the receipt: US addresses print MM/DD/YYYY, everywhere else prints DD/MM/YYYY. "12/07/2014" on a receipt from Ohio is 2014-12-07.
+- Write numbers bare: no currency symbols, no thousands separators, a period for the decimal point.
+- Use "" for a string you cannot read and 0 for a number you cannot read. Never guess.

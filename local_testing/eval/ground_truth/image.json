@@ -1,0 +1,118 @@
+{
+  "_note": "Indonesian restaurant, phone photo at an angle, IDR with comma thousands separators. The cleanest test of the line-total rule: every row prints an explicit 'N x' quantity, and 3 x Bbk Panggang Sam is 366,000 for the row (122,000 each). Line sum 1,346,000 = printed Sub-Total; Grand Total 1,591,600 adds Service 100,950 and PB1 144,695 and subtracts 45 rounding. Header is blurred out, so store and date are unscored.",
+  "store": null,
+  "date": null,
+  "total": 1591600,
+  "items": [
+    {
+      "name": "Nasi Campur Bali",
+      "qty": 1,
+      "price": 75000
+    },
+    {
+      "name": "Bbk Bengil Nasi",
+      "qty": 1,
+      "price": 125000
+    },
+    {
+      "name": "MilkShake Starwb",
+      "qty": 1,
+      "price": 37000
+    },
+    {
+      "name": "Ice Lemon Tea",
+      "qty": 1,
+      "price": 24000
+    },
+    {
+      "name": "Nasi Ayam Dewata",
+      "qty": 1,
+      "price": 70000
+    },
+    {
+      "name": "Free Ice Tea",
+      "qty": 3,
+      "price": 0
+    },
+    {
+      "name": "Organic Green Sa",
+      "qty": 1,
+      "price": 65000
+    },
+    {
+      "name": "Ice Tea",
+      "qty": 1,
+      "price": 18000
+    },
+    {
+      "name": "Ice Orange",
+      "qty": 1,
+      "price": 29000
+    },
+    {
+      "name": "Ayam Suir Bali",
+      "qty": 1,
+      "price": 85000
+    },
+    {
+      "name": "Tahu Goreng",
+      "qty": 2,
+      "price": 36000
+    },
+    {
+      "name": "Tempe Goreng",
+      "qty": 2,
+      "price": 36000
+    },
+    {
+      "name": "Tahu Telor Asin",
+      "qty": 1,
+      "price": 40000
+    },
+    {
+      "name": "Nasi Goreng Samb",
+      "qty": 1,
+      "price": 70000
+    },
+    {
+      "name": "Bbk Panggang Sam",
+      "qty": 3,
+      "price": 366000
+    },
+    {
+      "name": "Ayam Sambal Hija",
+      "qty": 1,
+      "price": 92000
+    },
+    {
+      "name": "Hot Tea",
+      "qty": 2,
+      "price": 44000
+    },
+    {
+      "name": "Ice Kopi",
+      "qty": 1,
+      "price": 32000
+    },
+    {
+      "name": "Tahu Telor Asin",
+      "qty": 1,
+      "price": 40000
+    },
+    {
+      "name": "Free Ice Tea",
+      "qty": 1,
+      "price": 0
+    },
+    {
+      "name": "Bebek Street",
+      "qty": 1,
+      "price": 44000
+    },
+    {
+      "name": "Ice Tea Tawar",
+      "qty": 1,
+      "price": 18000
+    }
+  ]
+}

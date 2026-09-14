@@ -1,0 +1,15 @@
+{
+  "_note": "Stock-art mockup, lorem ipsum items. Printed sub-total (76.80) is inconsistent with the line items; AMOUNT/Balance 84.80 is the grand total and equals the line sum.",
+  "store": null,
+  "date": "2018-01-01",
+  "total": 84.80,
+  "items": [
+    {"name": "Lorem", "qty": 1, "price": 6.50},
+    {"name": "Ipsum", "qty": 1, "price": 7.50},
+    {"name": "Dolor Sit", "qty": 1, "price": 48.00},
+    {"name": "Amet", "qty": 1, "price": 9.30},
+    {"name": "Consectetur", "qty": 1, "price": 11.90},
+    {"name": "Adipiscing Elit", "qty": 1, "price": 1.20},
+    {"name": "Sed Do", "qty": 1, "price": 0.40}
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "_note": "Same receipt as bar.JPG, cropped to the item block and rotated upright. Header is cropped away, so store and date are unscored. Pairs with bar.JPG to isolate how much the low-light framing costs.",
+  "store": null,
+  "date": null,
+  "total": 174.2,
+  "items": [
+    {
+      "name": "Catskill Pilsner",
+      "qty": 2,
+      "price": 16.0
+    },
+    {
+      "name": "Other Half Forever Ever IPA",
+      "qty": 1,
+      "price": 8.0
+    },
+    {
+      "name": "Allagash Curieux",
+      "qty": 5,
+      "price": 50.0
+    },
+    {
+      "name": "Hudson Valley Peach Silhouette",
+      "qty": 1,
+      "price": 10.0
+    },
+    {
+      "name": "Sloop Juice Bomb",
+      "qty": 1,
+      "price": 7.0
+    },
+    {
+      "name": "Grilled Cheese",
+      "qty": 1,
+      "price": 12.0
+    },
+    {
+      "name": "Underberg",
+      "qty": 4,
+      "price": 24.0
+    },
+    {
+      "name": "Talea Fresh Coast IPA",
+      "qty": 1,
+      "price": 9.0
+    },
+    {
+      "name": "Narragansett Lager",
+      "qty": 3,
+      "price": 18.0
+    },
+    {
+      "name": "Soju",
+      "qty": 2,
+      "price": 0.0
+    },
+    {
+      "name": "Soju",
+      "qty": 1,
+      "price": 6.0
+    }
+  ]
+}

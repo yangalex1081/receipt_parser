@@ -1,0 +1,19 @@
+{
+  "_note": "NYC bar, crumpled, shot in low light. Hardest case: multi-qty rows print an '(X each)' sub-line, and the Soju x2 row is comped to 0.00 via Reg price 12.00 / Discount -12.00 sub-lines. Line sum 160.00 = printed subtotal; total 174.20 includes 14.20 tax. Store name is cut off at the top edge, so it is unscored.",
+  "store": null,
+  "date": "2025-09-24",
+  "total": 174.20,
+  "items": [
+    {"name": "Catskill Pilsner", "qty": 2, "price": 16.00},
+    {"name": "Other Half Forever Ever IPA", "qty": 1, "price": 8.00},
+    {"name": "Allagash Curieux", "qty": 5, "price": 50.00},
+    {"name": "Hudson Valley Peach Silhouette", "qty": 1, "price": 10.00},
+    {"name": "Sloop Juice Bomb", "qty": 1, "price": 7.00},
+    {"name": "Grilled Cheese", "qty": 1, "price": 12.00},
+    {"name": "Underberg", "qty": 4, "price": 24.00},
+    {"name": "Talea Fresh Coast IPA", "qty": 1, "price": 9.00},
+    {"name": "Narragansett Lager", "qty": 3, "price": 18.00},
+    {"name": "Soju", "qty": 2, "price": 0.00},
+    {"name": "Soju", "qty": 1, "price": 6.00}
+  ]
+}

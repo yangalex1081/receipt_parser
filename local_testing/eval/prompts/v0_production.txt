@@ -1,0 +1,19 @@
+Extract this receipt as JSON. Reply with the JSON object only — no markdown fences, no explanation.
+
+Schema:
+{
+  "store": "merchant name as printed, or \"\" if unreadable",
+  "date": "purchase date as YYYY-MM-DD, or \"\" if unreadable",
+  "total": grand total printed on the receipt, as a number,
+  "items": [
+    {"name": "item name as printed", "qty": integer, "price": line total}
+  ]
+}
+
+Rules:
+- "price" is the LINE TOTAL for that row — the amount printed at the right of the line. If the receipt shows "3 COFFEE @ 2.50   7.50", then qty is 3 and price is 7.50, not 2.50.
+- Where no quantity is printed, qty is 1 and price is that line's amount.
+- Copy names exactly as printed. Do not translate them, expand abbreviations, correct spelling, or add items you cannot see.
+- Do NOT put subtotal, tax, service charge, tip, discount, rounding, payment or change lines in "items". The grand total goes in "total" and nowhere else.
+- Write numbers bare: no currency symbols, no thousands separators, a period for the decimal point.
+- Use "" for a string you cannot read and 0 for a number you cannot read. Never guess.

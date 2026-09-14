@@ -1,0 +1,41 @@
+{
+  "model": "qwen3-vl:4b",
+  "elapsed_seconds": 41,
+  "prompts": {
+    "v0_production": {
+      "summary": {
+        "f1": 1.0,
+        "recall": 1.0,
+        "precision": 1.0,
+        "rows_correct": 1,
+        "rows_total": 1,
+        "price_wrong": 0,
+        "junk": 0,
+        "totals_ok": 1,
+        "totals_scored": 1,
+        "dates_ok": 0,
+        "dates_scored": 1,
+        "unparsed": 0,
+        "seconds": 40.74345779186115
+      },
+      "photos": [
+        {
+          "photo": "sample21",
+          "f1": 1.0,
+          "correct": 1,
+          "n_truth": 1,
+          "n_pred": 1,
+          "price_wrong": 0,
+          "qty_ok": 1,
+          "junk": 0,
+          "total_ok": true,
+          "store_ok": true,
+          "date_ok": false,
+          "seconds": 40.7,
+          "missed": [],
+          "raw": "{\n  \"store\": \"STARBUCKS Store #10208\",\n  \"date\": \"2014-07-12\",\n  \"total\": 4.95,\n  \"items\": [\n    {\n      \"name\": \"Vt Pep Mocha\",\n      \"qty\": 1,\n      \"price\": 4.95\n    }\n  ]\n}"
+        }
+      ]
+    }
+  }
+}

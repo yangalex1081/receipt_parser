@@ -1,0 +1,14 @@
+Transcribe this receipt to JSON. Output the JSON object and nothing else.
+
+{
+  "store": "merchant name, or \"\"",
+  "date": "YYYY-MM-DD, or \"\"",
+  "total": grand total as a number,
+  "items": [{"name": "as printed", "qty": integer, "price": line total}]
+}
+
+"price" is the amount printed at the right of the row, for the whole row — not the per-unit price.
+
+"items" holds purchased goods only. Stop at the subtotal; nothing below it is an item.
+
+Numbers bare: no symbols, no thousands separators. Never guess a value you cannot read.

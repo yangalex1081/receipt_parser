@@ -1,0 +1,9 @@
+{
+  "_note": "Starbucks. Trap: 'Sbux Card 4.95' is a payment line, not an item. A model that lists it doubles the bill.",
+  "store": "Starbucks",
+  "date": "2014-12-07",
+  "total": 4.95,
+  "items": [
+    {"name": "Vt Pep Mocha", "qty": 1, "price": 4.95}
+  ]
+}

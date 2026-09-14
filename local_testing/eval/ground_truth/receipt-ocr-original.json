@@ -1,0 +1,133 @@
+{
+  "_note": "Walmart, clean flatbed scan, 25 line items ('# ITEMS SOLD 25' confirms the count). Traps: a 'COUPON 23100  1.00-O' discount line that must stay out of items (94.62 line sum - 1.00 coupon = 93.62 printed subtotal), four identical STKO SUNFLWR rows that must not be collapsed, and department letters (X/O/N/F/I) trailing each price.",
+  "store": "Walmart",
+  "date": "2017-07-28",
+  "total": 98.21,
+  "items": [
+    {
+      "name": "PET TOY",
+      "qty": 1,
+      "price": 1.97
+    },
+    {
+      "name": "FLOPPY PUPPY",
+      "qty": 1,
+      "price": 1.97
+    },
+    {
+      "name": "SSSUPREME S",
+      "qty": 1,
+      "price": 4.97
+    },
+    {
+      "name": "2.5 SQUEAK",
+      "qty": 1,
+      "price": 5.92
+    },
+    {
+      "name": "MUNCHY DMBEL",
+      "qty": 1,
+      "price": 3.77
+    },
+    {
+      "name": "DOG TREAT",
+      "qty": 1,
+      "price": 2.92
+    },
+    {
+      "name": "PED PCH 1",
+      "qty": 1,
+      "price": 0.5
+    },
+    {
+      "name": "PED PCH 1",
+      "qty": 1,
+      "price": 0.5
+    },
+    {
+      "name": "HNYMD SMORES",
+      "qty": 1,
+      "price": 3.98
+    },
+    {
+      "name": "FRENCH DRSNG",
+      "qty": 1,
+      "price": 1.98
+    },
+    {
+      "name": "3 ORANGES",
+      "qty": 1,
+      "price": 5.47
+    },
+    {
+      "name": "BABY CARROTS",
+      "qty": 1,
+      "price": 1.48
+    },
+    {
+      "name": "COLLARDS",
+      "qty": 1,
+      "price": 1.24
+    },
+    {
+      "name": "CALZONE",
+      "qty": 1,
+      "price": 2.5
+    },
+    {
+      "name": "MM RVW MNT",
+      "qty": 1,
+      "price": 19.77
+    },
+    {
+      "name": "STKOBRLPLABL",
+      "qty": 1,
+      "price": 1.97
+    },
+    {
+      "name": "STKOBRLPLABL",
+      "qty": 1,
+      "price": 1.97
+    },
+    {
+      "name": "STKO SUNFLWR",
+      "qty": 1,
+      "price": 0.97
+    },
+    {
+      "name": "STKO SUNFLWR",
+      "qty": 1,
+      "price": 0.97
+    },
+    {
+      "name": "STKO SUNFLWR",
+      "qty": 1,
+      "price": 0.97
+    },
+    {
+      "name": "STKO SUNFLWR",
+      "qty": 1,
+      "price": 0.97
+    },
+    {
+      "name": "BLING BEADS",
+      "qty": 1,
+      "price": 0.97
+    },
+    {
+      "name": "GREAT VALUE",
+      "qty": 1,
+      "price": 9.97
+    },
+    {
+      "name": "LIPTON",
+      "qty": 1,
+      "price": 4.48
+    },
+    {
+      "name": "DRY DOG",
+      "qty": 1,
+      "price": 12.44
+    }
+  ]
+}

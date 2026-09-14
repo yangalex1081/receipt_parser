@@ -1,18 +1,33 @@
-"""All tests for the receipt-parser backend, offline and live.
+"""Functionality tests for the receipt-parser backend.
 
-    pytest backend/tests/ -v                              # offline only (fast)
-    RUN_LIVE=1 pytest backend/tests/ -v                   # + hit the deployment
-    RUN_LIVE=1 RUN_LIVE_PARSE=1 pytest backend/tests/ -v  # + a real GPU parse
+    pytest                  # offline only (fast, free, the default)
+    pytest -m live          # the deploy checks instead
+    pytest -m "live or not live"   # everything
 
-Two kinds of test live here:
+Every test here answers a yes/no question. How *well* the parser reads a
+receipt is not a yes/no question, so it is not tested here at all — that lives
+in local_testing/eval/, which scores prompts and models against hand-labelled
+receipts and reports numbers rather than asserts. Keep the two apart: an eval
+turned into an assert either has a threshold so loose it never fires or so
+tight it fails on noise.
 
-  OFFLINE — Modal is stubbed, nothing touches the network. These test the code:
-    auth logic, upload validation, result states, response shape. They run
-    anywhere, including CI, and never cost anything.
+Two kinds of test live in this file:
 
-  LIVE — hits the real Netlify site and Modal app. These test the deployment,
-    not the code: that Netlify is signing, that Modal verifies the signature,
-    that netlify.toml points at the right URL. Skipped unless RUN_LIVE is set.
+  OFFLINE (default) — Modal is stubbed, nothing touches the network. These test
+    the code: auth logic, upload validation, result states, response shape, and
+    each of the four GPU-app functions in funcs.py. They run anywhere,
+    including CI, and never cost anything.
+
+    The funcs.py functions are exercised through `.local()`, which runs the
+    body in-process — the same code Modal runs, minus the container. Three of
+    the four run fully offline; transcript_receipt needs the weights, so here
+    it is covered by its contract (the prompt and the image constants) and the
+    model itself is measured in the eval harness.
+
+  LIVE (`-m live`) — hits the real Netlify site and Modal app. These test the
+    deployment, not the code: that Netlify is signing, that Modal verifies the
+    signature, that netlify.toml points at the right URL. None of them invoke
+    the GPU; scoring the deployed model is `run_eval.py --modal`.
 
 If offline passes but live fails, the code is fine and the deploy is
 misconfigured. That distinction is the whole reason both exist.
@@ -49,10 +64,9 @@ MODAL = os.environ.get(
 # Cold start was measured at ~66s.
 TIMEOUT = httpx.Timeout(120.0)
 
-# Applied per-test so live tests can share this file with offline ones.
-live = pytest.mark.skipif(
-    not os.environ.get("RUN_LIVE"), reason="live tests are opt-in; set RUN_LIVE=1"
-)
+# Applied per-test so live tests can share this file with offline ones. pytest.ini
+# deselects them by default; `pytest -m live` runs them.
+live = pytest.mark.live
 
 SIGNED_ROUTES = [
     ("get", "/result/fc-TEST123"),
@@ -78,6 +92,23 @@ class FakeProcessReceipt:
         return FakeCall()
 
 
+# What the model would reply for the stubbed job. It is a raw string rather
+# than a finished payload because the stub below runs it through the real
+# normalize_output: a done result must be something funcs.py can actually
+# produce, or the gateway tests drift from the deployment while still passing.
+#
+# price is the LINE TOTAL, so total == sum(price), never sum(price*qty).
+STUB_REPLY = """{
+  "store": "Test Mart",
+  "date": "2026-08-14",
+  "total": 15.00,
+  "items": [
+    {"name": "APPLES", "qty": 3, "price": 9.00},
+    {"name": "LATTE", "qty": 2, "price": 6.00}
+  ]
+}"""
+
+
 class FakeFunctionCall:
     """Drives /result through its four outcomes via `mode`."""
 
@@ -97,18 +128,10 @@ class FakeFunctionCall:
             raise modal.exception.OutputExpiredError()
         if FakeFunctionCall.mode == "failed":
             raise RuntimeError("gpu exploded")
-        # price is the LINE TOTAL, so total == sum(price), never sum(price*qty).
-        return {
-            "store": "Test Mart",
-            "date": "2026-08-14",
-            "total": 15.00,
-            "line_sum": 15.00,
-            "printed_total": 15.00,
-            "items": [
-                {"name": "Apples", "qty": 3, "price": 9.00},
-                {"name": "Latte", "qty": 2, "price": 6.00},
-            ],
-        }
+
+        import funcs
+
+        return funcs.normalize_output.local(STUB_REPLY)
 
 
 # --------------------------------------------------------------------------
@@ -292,11 +315,12 @@ def test_result_done_returns_payload(client, sign):
 
 
 def test_price_is_a_line_total_not_a_unit_price(client, sign):
-    """Pins the schema both sides depend on.
+    """Pins the schema both sides depend on, end to end.
 
-    `price` is the total for the row, so the receipt total is sum(price). If
-    anything starts multiplying by qty, this fails: the qty-weighted sum here
-    would be 39.00, not 15.00.
+    `price` is the total for the row, so the receipt total is sum(price). The
+    numbers here come out of the real normalize_output, so if that ever starts
+    multiplying by qty this fails: the qty-weighted sum would be 39.00, not
+    15.00.
     """
     FakeFunctionCall.mode = "done"
     result = client.get("/result/fc-TEST123", headers=sign()).json()["result"]
@@ -327,7 +351,11 @@ def test_result_job_failure(client, sign):
 
 def test_result_shape_matches_frontend_expectations(client, sign):
     """ReceiptTable reads result.printed_total and result.items[].{name,qty,price};
-    keep them in sync."""
+    keep them in sync.
+
+    The payload is real normalize_output run through the gateway and out as
+    JSON, so this covers the whole handoff — including that every value
+    survives serialization."""
     FakeFunctionCall.mode = "done"
     result = client.get("/result/fc-TEST123", headers=sign()).json()["result"]
     assert set(result) >= {"store", "date", "total", "printed_total", "items"}
@@ -335,7 +363,7 @@ def test_result_shape_matches_frontend_expectations(client, sign):
 
 
 # ==========================================================================
-# LIVE — requires RUN_LIVE=1
+# LIVE — deployment checks; run with `pytest -m live`
 # ==========================================================================
 
 @live
@@ -398,46 +426,12 @@ def test_live_result_endpoint_is_signed_by_netlify():
     assert r.status_code != 401
 
 
-@live
-@pytest.mark.skipif(
-    not os.environ.get("RUN_LIVE_PARSE"),
-    reason="costs a GPU invocation; set RUN_LIVE_PARSE=1",
-)
-def test_live_full_parse_round_trip():
-    """Upload -> poll -> result, the way the browser does it.
-
-    This is the only test that exercises the model itself. It asserts the
-    contract rather than the content — a VLM's exact reading of a photo is not
-    a stable thing to assert on — but an empty item list means the parse
-    failed, which is the regression that matters.
-    """
-    photo = BACKEND.parent / "test_photos" / "sample21.jpg"
-    if not photo.exists():
-        pytest.skip("no sample receipt available")
-
-    r = httpx.post(
-        f"{SITE}/api/parse",
-        files={"file": ("sample21.jpg", photo.read_bytes(), "image/jpeg")},
-        timeout=TIMEOUT,
-    )
-    assert r.status_code == 200, f"{r.status_code}: {r.text[:200]}"
-    call_id = r.json()["call_id"]
-
-    deadline = time.time() + 150
-    while time.time() < deadline:
-        time.sleep(3)
-        poll = httpx.get(f"{SITE}/api/result/{call_id}", timeout=TIMEOUT)
-        assert poll.status_code == 200, f"{poll.status_code}: {poll.text[:200]}"
-        body = poll.json()
-        if body["status"] == "done":
-            result = body["result"]
-            assert set(result) >= {"store", "date", "total", "printed_total", "items"}
-            assert result["items"], "model returned no line items"
-            assert set(result["items"][0]) >= {"name", "qty", "price"}
-            assert all(i["name"] for i in result["items"]), "nameless line item"
-            return
-
-    pytest.fail("parse did not finish within 150s")
+# The two tests that used to sit here ran the model on a single photo and
+# asserted `items != []`. That is an eval with one case and a threshold of
+# zero: it passes for a prompt that reads half the rows, and it costs a GPU
+# invocation to tell you so. `python local_testing/eval/run_eval.py --modal`
+# asks the same question of the same deployment across six labelled receipts
+# and answers it with an F1.
 
 
 # ==========================================================================
@@ -586,3 +580,274 @@ def test_normalize_output_shape_is_stable(normalize):
     out = normalize(QWEN_REPLY)
     assert set(out) >= {"store", "date", "total", "line_sum", "printed_total", "items"}
     assert set(out["items"][0]) >= {"name", "qty", "price"}
+
+
+# ==========================================================================
+# OFFLINE — the four Modal functions, one section each
+#
+# funcs.py registers four functions on the app. normalize_output is covered
+# above; the rest are covered here. Everything runs through `.local()`, which
+# executes the body in-process — no Modal, no GPU, no network.
+#
+# transcript_receipt is the exception: it needs the model, so what is testable
+# offline is its *contract* (the prompt, the image constants) rather than its
+# output. The one test that runs the model lives in the live section.
+# ==========================================================================
+
+import io  # noqa: E402
+
+try:
+    from PIL import Image as PILImage  # noqa: E402
+except ImportError:  # pragma: no cover - Pillow is not a gateway dependency
+    PILImage = None
+
+needs_pillow = pytest.mark.skipif(PILImage is None, reason="Pillow not installed")
+
+MODAL_FUNCTIONS = {
+    "preprocess_image",
+    "transcript_receipt",
+    "normalize_output",
+    "process_receipt",
+}
+
+# EXIF tag 274 is Orientation. 1 = as-shot, 3 = 180 deg, 6 and 8 = the two
+# quarter turns, which are what a phone writes when you photograph a receipt
+# in portrait.
+EXIF_ORIENTATION = 274
+
+
+@pytest.fixture
+def funcs_mod():
+    import funcs
+
+    return funcs
+
+
+@pytest.fixture
+def preprocess(funcs_mod):
+    return funcs_mod.preprocess_image.local
+
+
+def encode(image, fmt="JPEG", orientation=None):
+    """Serialize a PIL image the way an upload would arrive."""
+    buf = io.BytesIO()
+    if orientation is None:
+        image.save(buf, format=fmt)
+    else:
+        exif = image.getexif()
+        exif[EXIF_ORIENTATION] = orientation
+        image.save(buf, format=fmt, exif=exif, quality=95)
+    return buf.getvalue()
+
+
+def decode(image_bytes):
+    return PILImage.open(io.BytesIO(image_bytes))
+
+
+# --------------------------------------------------------------------------
+# preprocess_image
+# --------------------------------------------------------------------------
+
+@needs_pillow
+def test_preprocess_returns_an_rgb_png(preprocess):
+    out = decode(preprocess(encode(PILImage.new("RGB", (60, 80), "white"))))
+    assert out.format == "PNG"
+    assert out.mode == "RGB"
+
+
+@needs_pillow
+@pytest.mark.parametrize(
+    "orientation,expected",
+    [(1, (100, 200)), (3, (100, 200)), (6, (200, 100)), (8, (200, 100))],
+)
+def test_preprocess_applies_exif_orientation(preprocess, orientation, expected):
+    """The failure this guards is silent: PIL does not apply EXIF rotation on
+    its own, so a portrait photo reaches the model sideways and the parse comes
+    back empty. 6 and 8 are quarter turns and must swap the dimensions."""
+    src = PILImage.new("RGB", (100, 200), "white")
+    assert decode(preprocess(encode(src, orientation=orientation))).size == expected
+
+
+@needs_pillow
+def test_preprocess_rotates_the_pixels_not_just_the_dimensions(preprocess):
+    """A swapped size is necessary but not sufficient — check where the content
+    landed. Top half red in portrait must end up on the right after a 90 deg
+    turn."""
+    src = PILImage.new("RGB", (100, 200), (255, 0, 0))
+    src.paste((0, 0, 255), (0, 100, 100, 200))  # bottom half blue
+    out = decode(preprocess(encode(src, orientation=6))).convert("RGB")
+
+    w, h = out.size
+    assert out.getpixel((3 * w // 4, h // 2))[0] > 200, "red should be on the right"
+    assert out.getpixel((w // 4, h // 2))[2] > 200, "blue should be on the left"
+
+
+@needs_pillow
+@pytest.mark.parametrize(
+    "given,expected",
+    [((4000, 3000), (1920, 1440)), ((3000, 4000), (1440, 1920))],
+)
+def test_preprocess_caps_the_long_edge_at_1920(preprocess, given, expected):
+    """A 12MP phone photo is downsampled by the processor anyway; shipping it
+    through the pipeline at full size just costs transfer. Aspect ratio has to
+    survive, in both landscape and portrait."""
+    assert decode(preprocess(encode(PILImage.new("RGB", given)))).size == expected
+
+
+@needs_pillow
+def test_preprocess_never_upscales(preprocess):
+    """Enlarging a small upload invents detail the model would read as text."""
+    assert decode(preprocess(encode(PILImage.new("RGB", (800, 600))))).size == (800, 600)
+
+
+@needs_pillow
+@pytest.mark.parametrize("mode", ["RGBA", "L", "P", "CMYK"])
+def test_preprocess_converts_any_mode_to_rgb(preprocess, mode):
+    """Screenshots arrive RGBA, scans arrive greyscale. None may reach the
+    model with an alpha channel or a palette."""
+    fmt = "JPEG" if mode == "CMYK" else "PNG"
+    out = decode(preprocess(encode(PILImage.new(mode, (50, 60)), fmt=fmt)))
+    assert out.mode == "RGB"
+    assert out.size == (50, 60)
+
+
+# --------------------------------------------------------------------------
+# transcript_receipt — contract only; the model itself runs in the live section
+# --------------------------------------------------------------------------
+
+def test_prompt_names_every_field_of_the_target_schema(funcs_mod):
+    """There is no fine-tune behind this schema. The prompt is the schema, so
+    a field dropped from it is a field the model stops returning."""
+    for field in ("store", "date", "total", "items", "name", "qty", "price"):
+        assert field in funcs_mod.PROMPT, f"PROMPT no longer mentions {field!r}"
+
+
+def test_prompt_pins_the_line_total_rule(funcs_mod):
+    """The one convention the frontend cannot recover from: it sums `price`
+    as-is. If this drifts to a unit price, every multi-quantity receipt
+    under-reports and nothing raises."""
+    assert "LINE TOTAL" in funcs_mod.PROMPT
+    # the worked example — "3 COFFEE @ 2.50   7.50"
+    assert "7.50" in funcs_mod.PROMPT and "2.50" in funcs_mod.PROMPT
+
+
+def test_prompt_excludes_summary_rows_and_code_fences(funcs_mod):
+    prompt = funcs_mod.PROMPT.lower()
+    assert "markdown" in prompt, "the model needs telling not to fence the JSON"
+    for row in ("subtotal", "tax", "change"):
+        assert row in prompt
+
+
+def test_image_patch_size_matches_qwen3(funcs_mod):
+    """qwen_vl_utils defaults image_patch_size to 14 — Qwen2-VL's value.
+    Qwen3-VL uses 16, and the default would resize off the token grid."""
+    assert funcs_mod.IMAGE_PATCH_SIZE == 16
+
+
+def test_max_pixels_is_a_whole_number_of_visual_tokens(funcs_mod):
+    """One token covers a (patch x merge)^2 block. MAX_PIXELS has to be a
+    multiple of that, and under the model's own 16384-token ceiling."""
+    token_pixels = (funcs_mod.IMAGE_PATCH_SIZE * 2) ** 2
+    assert funcs_mod.MAX_PIXELS % token_pixels == 0
+    assert 0 < funcs_mod.MAX_PIXELS // token_pixels <= 16384
+
+
+# --------------------------------------------------------------------------
+# process_receipt — orchestration, with the GPU stage stubbed out
+# --------------------------------------------------------------------------
+
+@pytest.fixture
+def stub_transcript(funcs_mod, monkeypatch):
+    """Stand in for the GPU stage so the pipeline runs without a model."""
+
+    class Stub:
+        def __init__(self):
+            self.reply = (
+                '{"store": "Test Mart", "date": "2026-01-01", "total": 5.0,'
+                ' "items": [{"name": "X", "qty": 1, "price": 5.0}]}'
+            )
+            self.received = None
+
+        def local(self, image_bytes):
+            self.received = image_bytes
+            return self.reply
+
+    stub = Stub()
+    monkeypatch.setattr(funcs_mod, "transcript_receipt", stub)
+    return stub
+
+
+@needs_pillow
+def test_process_receipt_runs_all_three_stages(funcs_mod, stub_transcript):
+    """preprocess -> transcript -> normalize, returning the frontend schema."""
+    out = funcs_mod.process_receipt.local(encode(PILImage.new("RGB", (60, 80))))
+    assert out["store"] == "Test Mart"
+    assert out["items"] == [{"name": "X", "qty": 1, "price": 5.0}]
+    assert out["printed_total"] == 5.0
+    assert out["line_sum"] == 5.0
+
+
+@needs_pillow
+def test_process_receipt_hands_the_model_preprocessed_bytes(funcs_mod, stub_transcript):
+    """The model must see the EXIF-corrected PNG, not the original upload —
+    otherwise preprocess_image is decorative."""
+    funcs_mod.process_receipt.local(encode(PILImage.new("RGB", (60, 80))))
+    assert stub_transcript.received.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+@needs_pillow
+def test_process_receipt_survives_a_junk_generation(funcs_mod, stub_transcript):
+    """A refusal or a truncated reply must come back empty, not raise — a GPU
+    exception would surface to the browser as a 500 after a 60s wait."""
+    stub_transcript.reply = "I'm sorry, I can't read that receipt."
+    out = funcs_mod.process_receipt.local(encode(PILImage.new("RGB", (60, 80))))
+    assert out["items"] == []
+    assert out["total"] == 0
+
+
+# --------------------------------------------------------------------------
+# Modal deployment config — cheap guards on expensive mistakes
+# --------------------------------------------------------------------------
+
+def test_every_function_is_registered_on_the_app(funcs_mod):
+    """The gateway spawns process_receipt by direct reference; a function that
+    silently stops registering fails only at deploy time."""
+    from config import app
+
+    assert MODAL_FUNCTIONS <= set(app.registered_functions)
+
+
+def test_gateway_and_gpu_functions_share_one_app(gw):
+    """Why `modal deploy backend/gateway.py` covers both halves: importing
+    funcs registers the GPU functions on the same app the gateway serves from.
+    Split them across two apps and the deploy silently ships half the system.
+    """
+    from config import app
+
+    registered = set(app.registered_functions)
+    assert "fastapi_app" in registered, "the gateway is not on this app"
+    assert MODAL_FUNCTIONS <= registered
+
+
+@pytest.mark.parametrize("name", ["transcript_receipt", "process_receipt"])
+def test_gpu_functions_pin_the_l4(funcs_mod, name):
+    """gpu="any" could land on a T4: 16GB and no bf16 support."""
+    assert getattr(funcs_mod, name).spec.gpus == "L4"
+
+
+@pytest.mark.parametrize("name", ["transcript_receipt", "process_receipt"])
+def test_gpu_functions_mount_the_model_cache(funcs_mod, name):
+    """Without the volume, every cold start re-downloads ~8GB of weights."""
+    assert "/root/models" in getattr(funcs_mod, name).spec.volumes
+
+
+@pytest.mark.parametrize("name", ["preprocess_image", "normalize_output"])
+def test_cpu_functions_request_no_gpu(funcs_mod, name):
+    """Resizing an image and parsing JSON on an L4 is billed at $0.80/hr."""
+    assert getattr(funcs_mod, name).spec.gpus is None
+
+
+def test_the_model_is_cached_between_calls(funcs_mod):
+    """setup() loads ~8GB. Drop the lru_cache and every single request reloads
+    it, turning a 3s warm parse back into a cold start."""
+    assert funcs_mod.setup.cache_info().maxsize == 1

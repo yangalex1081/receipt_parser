@@ -1,0 +1,22 @@
+Transcribe this receipt to JSON. Reply with the JSON object only — no markdown fences, no explanation, no commentary.
+
+Work down the receipt one printed row at a time, in the order the rows appear. Emit one entry per printed row in the item block. Do not merge rows, do not reorder them, do not deduplicate them: if the same product name is printed on four separate rows, that is four entries. Do not skip a row because its amount is 0.00.
+
+The item block begins under the header and ends at the first summary row. Everything from the subtotal downward — subtotal, tax, VAT, service, tip, discount, coupon, rounding, total, change, balance, and every payment row (cash, card, Visa, debit, a masked card number) — is excluded. Payment rows are the easiest to get wrong because they repeat the total; a receipt with one drink and a card line has one item, not two.
+
+Read each row right to left: the number at the right edge is that row's total, whatever quantity it covers. Take it as printed. Do not compute it, do not divide it by the quantity, do not add rows together. A per-unit price shown alongside ("x 4  ($6.00 each)  $24.00") is context for the row, not a separate row: qty 4, price 24.00.
+
+{
+  "store": "merchant name as printed, or \"\" if unreadable",
+  "date": "purchase date as YYYY-MM-DD, or \"\" if unreadable",
+  "total": grand total printed on the receipt, as a number,
+  "items": [
+    {"name": "item name exactly as printed", "qty": integer, "price": that row's printed total}
+  ]
+}
+
+Names are copied, not interpreted: no translating, no expanding abbreviations, no fixing spelling, no inventing a row you cannot see. Quantity is the count printed on the row, or 1 if none is printed.
+
+A date printed as three numbers is ambiguous. Decide the order from the address on the receipt: US addresses print MM/DD/YYYY, everywhere else prints DD/MM/YYYY. "12/07/2014" on a receipt from Ohio is 2014-12-07.
+
+Write numbers bare: no currency symbols, no thousands separators, a period for the decimal point. Use "" for a string you cannot read and 0 for a number you cannot read.
