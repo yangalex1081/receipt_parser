@@ -1,4 +1,11 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
+import {
+  computeSplit,
+  formatCents,
+  parseBuyers,
+  summaryText,
+  toCents,
+} from "../split";
 
 /**
  * Fully controlled: rows are rendered straight from `parsedData` and every
@@ -15,12 +22,13 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
     return [];
   }, [parsedData]);
 
-  const emit = (nextItems) => {
-    if (!onChange) return;
-    onChange(
-      Array.isArray(parsedData) ? nextItems : { ...parsedData, items: nextItems }
-    );
+  const base = Array.isArray(parsedData) ? { items: parsedData } : parsedData;
+
+  const update = (patch) => {
+    if (onChange) onChange({ ...base, ...patch });
   };
+
+  const emit = (nextItems) => update({ items: nextItems });
 
   // --- Editing handlers ----------------------------------------------------
 
@@ -52,21 +60,42 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
     [items]
   );
 
-  const totalsByBuyer = useMemo(() => {
-    const map = {};
+  // Tax, tip, service charge or discount. The parser deliberately keeps these
+  // out of the items, so they have to be entered (or pulled from the printed
+  // total below) and are then shared in proportion to what each person had.
+  const extras = parseFloat(base?.extras) || 0;
+
+  const split = useMemo(
+    () => computeSplit(items, toCents(extras)),
+    [items, extras]
+  );
+
+  // Every name used so far, offered as autocomplete in the Buyer column.
+  const knownNames = useMemo(() => {
+    const names = new Map();
     for (const i of items) {
-      const buyer = i.buyer?.trim() || "Unassigned";
-      map[buyer] = (map[buyer] || 0) + lineTotal(i);
+      for (const n of parseBuyers(i.buyer)) names.set(n.toLowerCase(), n);
     }
-    return map;
+    return [...names.values()];
   }, [items]);
+
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(summaryText(split, base?.store));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  };
 
   // The total printed on the receipt itself, when the parser could read it.
   // A gap between that and the sum of the rows usually means a line was
   // missed — the most common extraction failure — so it is worth showing.
-  const printedTotal = Array.isArray(parsedData) ? null : parsedData?.printed_total;
+  const printedTotal = base?.printed_total;
   const hasPrintedTotal = typeof printedTotal === "number" && printedTotal > 0;
-  const difference = hasPrintedTotal ? printedTotal - totalAmount : 0;
+  const difference = hasPrintedTotal ? printedTotal - totalAmount - extras : 0;
   const totalsDisagree = hasPrintedTotal && Math.abs(difference) > 0.005;
 
   // --- Rendering -----------------------------------------------------------
@@ -145,7 +174,8 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
                       className="cell-input"
                       value={item.buyer || ""}
                       onChange={(e) => handleEdit(i, "buyer", e.target.value)}
-                      placeholder="e.g. Alex"
+                      placeholder="e.g. Alex, Sam"
+                      list="known-buyers"
                       aria-label={`Item ${i + 1} buyer`}
                     />
                   </td>
@@ -173,7 +203,7 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
             <tfoot>
               <tr>
                 <td colSpan="5" className="total-row">
-                  <strong>Total: ${totalAmount.toFixed(2)}</strong>
+                  <strong>Items: ${totalAmount.toFixed(2)}</strong>
                   {totalsDisagree && (
                     <span
                       className="total-mismatch"
@@ -188,15 +218,20 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
                       {Math.abs(difference).toFixed(2)} unaccounted)
                     </span>
                   )}
+                  {totalsDisagree && difference > 0 && (
+                    <button
+                      type="button"
+                      className="btn btn--link"
+                      onClick={() =>
+                        update({ extras: Math.round((extras + difference) * 100) / 100 })
+                      }
+                      title="If the gap is tax, tip or a fee rather than a missed item"
+                    >
+                      Count it as tax/tip
+                    </button>
+                  )}
                 </td>
               </tr>
-              {Object.entries(totalsByBuyer).map(([buyer, total]) => (
-                <tr key={buyer}>
-                  <td colSpan="5" className="buyer-row">
-                    {buyer}: ${total.toFixed(2)}
-                  </td>
-                </tr>
-              ))}
             </tfoot>
           )}
         </table>
@@ -210,6 +245,76 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
       >
         ➕ Add Item
       </button>
+
+      <datalist id="known-buyers">
+        {knownNames.map((n) => (
+          <option key={n} value={n} />
+        ))}
+      </datalist>
+
+      <section className="split" aria-labelledby="split-heading">
+        <h2 id="split-heading">Split</h2>
+
+        <label className="extras">
+          <span>Tax, tip &amp; fees ($)</span>
+          <input
+            type="number"
+            step="0.01"
+            value={base?.extras ?? ""}
+            placeholder="0.00"
+            onChange={(e) =>
+              update({ extras: e.target.value === "" ? "" : parseFloat(e.target.value) })
+            }
+          />
+          <small>Shared in proportion to what each person had. Use a negative number for a discount.</small>
+        </label>
+
+        {split.people.length > 0 ? (
+          <>
+            <table className="split-table">
+              <thead>
+                <tr>
+                  <th>Person</th>
+                  <th>Items</th>
+                  {split.extras !== 0 && <th>Tax/tip</th>}
+                  <th>Owes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {split.people.map((p) => (
+                  <tr key={p.name}>
+                    <td>{p.name}</td>
+                    <td>{formatCents(p.subtotal)}</td>
+                    {split.extras !== 0 && <td>{formatCents(p.extras)}</td>}
+                    <td>
+                      <strong>{formatCents(p.total)}</strong>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td>Total</td>
+                  <td>{formatCents(split.subtotal)}</td>
+                  {split.extras !== 0 && <td>{formatCents(split.extras)}</td>}
+                  <td>
+                    <strong>{formatCents(split.total)}</strong>
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+
+            <button type="button" className="btn btn--primary" onClick={handleCopy}>
+              {copied ? "✓ Copied" : "📋 Copy summary"}
+            </button>
+          </>
+        ) : (
+          <p className="table-empty">
+            Add items and put a name in the Buyer column. Use commas to share an
+            item, e.g. “Alex, Sam”.
+          </p>
+        )}
+      </section>
     </div>
   );
 };

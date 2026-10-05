@@ -218,10 +218,10 @@ const UploadForm = ({ onParsed }) => {
       )}
 
       {result && (
-        <div className="output">
-          <h3>Parsed output</h3>
+        <details className="output">
+          <summary>Raw parser output</summary>
           <pre>{JSON.stringify(result, null, 2)}</pre>
-        </div>
+        </details>
       )}
     </div>
   );

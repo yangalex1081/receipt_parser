@@ -83,15 +83,33 @@ a {
 
 /* --- Layout -------------------------------------------------------------- */
 
-.app-header {
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border);
-}
-
 .app-body {
   display: flex;
   align-items: stretch;
-  min-height: calc(100vh - 70px);
+  min-height: 100vh;
+}
+
+.tagline {
+  color: var(--text-muted);
+  margin: -0.5rem 0 1.5rem;
+  max-width: 520px;
+}
+
+.dev-tools {
+  margin-top: 40px;
+  max-width: 520px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.dev-tools summary,
+.output summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.dev-tools[open] summary {
+  margin-bottom: 8px;
 }
 
 .pane {
@@ -302,4 +320,74 @@ a {
   gap: 8px;
   flex-wrap: wrap;
   margin-bottom: 12px;
+}
+
+.btn--link {
+  background: transparent;
+  color: var(--accent);
+  padding: 0 6px;
+  margin-left: 6px;
+  text-decoration: underline;
+}
+
+/* --- Split --------------------------------------------------------------- */
+
+.split {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.extras {
+  display: grid;
+  gap: 4px;
+  max-width: 360px;
+  margin-bottom: 16px;
+}
+
+.extras span {
+  font-weight: 500;
+}
+
+.extras input {
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.extras input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.extras small {
+  color: var(--text-muted);
+}
+
+.split-table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+
+.split-table th,
+.split-table td {
+  padding: 6px 10px;
+  text-align: right;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.split-table th:first-child,
+.split-table td:first-child {
+  text-align: left;
+}
+
+.split-table thead,
+.split-table tfoot {
+  background: var(--surface-alt);
 }
