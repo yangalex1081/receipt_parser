@@ -683,15 +683,28 @@ def test_preprocess_rotates_the_pixels_not_just_the_dimensions(preprocess):
 
 
 @needs_pillow
-@pytest.mark.parametrize(
-    "given,expected",
-    [((4000, 3000), (1920, 1440)), ((3000, 4000), (1440, 1920))],
-)
-def test_preprocess_caps_the_long_edge_at_1920(preprocess, given, expected):
+@pytest.mark.parametrize("given", [(4000, 3000), (3000, 4000), (1500, 7500)])
+def test_preprocess_caps_the_pixel_count(preprocess, funcs_mod, given):
     """A 12MP phone photo is downsampled by the processor anyway; shipping it
     through the pipeline at full size just costs transfer. Aspect ratio has to
-    survive, in both landscape and portrait."""
-    assert decode(preprocess(encode(PILImage.new("RGB", given)))).size == expected
+    survive, in landscape, portrait and till-roll shapes."""
+    w, h = decode(preprocess(encode(PILImage.new("RGB", given)))).size
+    budget = funcs_mod.PREPROCESS_MAX_PIXELS
+    assert 0.98 * budget <= w * h <= 1.01 * budget
+    assert abs(w / h - given[0] / given[1]) < 0.01
+
+
+@needs_pillow
+def test_preprocess_keeps_a_long_receipt_at_full_budget(preprocess, funcs_mod):
+    """The reason the cap is on pixels and not the long edge: a 600x3000 till
+    roll is already under budget and must not be shrunk at all. Under the old
+    1920px long-edge cap it arrived as 384x1920."""
+    assert 600 * 3000 <= funcs_mod.PREPROCESS_MAX_PIXELS
+    assert decode(preprocess(encode(PILImage.new("RGB", (600, 3000))))).size == (600, 3000)
+
+
+def test_preprocess_leaves_the_processor_something_to_downsample(funcs_mod):
+    assert funcs_mod.PREPROCESS_MAX_PIXELS >= funcs_mod.MAX_PIXELS
 
 
 @needs_pillow

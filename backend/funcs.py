@@ -32,9 +32,12 @@ _TOKEN_PIXELS = (IMAGE_PATCH_SIZE * 2) ** 2
 
 # Cap the image at ~1600 visual tokens. The model's own ceiling is 16384, which
 # for a receipt is mostly spent encoding blank paper: 1600 tokens is roughly
-# 1280x1000, enough that small print stays legible, and it keeps prefill (and
+# 1280x1280 (or 640x2560 for a long till roll), enough that small print stays legible, and it keeps prefill (and
 # therefore the warm parse latency) bounded.
 MAX_PIXELS = 1600 * _TOKEN_PIXELS
+
+# What preprocess_image hands the processor at most. See preprocess_image.
+PREPROCESS_MAX_PIXELS = 2 * MAX_PIXELS
 
 # Long receipts run to ~40 items; 1024 tokens covers that with margin.
 MAX_NEW_TOKENS = 1024
@@ -113,13 +116,20 @@ def preprocess_image(image_bytes: bytes) -> bytes:
     image = ImageOps.exif_transpose(image)
     image = image.convert("RGB")
 
-    # Cap the long edge. The processor downsamples to MAX_PIXELS anyway; feeding
-    # a 12MP phone photo through the volume mount first just costs transfer.
-    max_size = 1920
+    # Cap the pixel count, not the long edge. The processor downsamples to
+    # MAX_PIXELS whatever the shape, so that is the budget that matters; a
+    # long-edge cap spends it badly on the receipts that need it most. A
+    # 600x3000 till roll capped at 1920 on the long edge arrives as 384x1920 —
+    # under half the model's budget, with the small print already gone. Twice
+    # the budget leaves the processor something to downsample from without
+    # carrying a 12MP photo through the pipeline.
     w, h = image.size
-    scale = min(max_size / max(w, h), 1.0)
+    scale = min((PREPROCESS_MAX_PIXELS / (w * h)) ** 0.5, 1.0)
     if scale < 1.0:
-        image = image.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
+        image = image.resize(
+            (max(1, round(w * scale)), max(1, round(h * scale))),
+            Image.Resampling.LANCZOS,
+        )
 
     buf = io.BytesIO()
     image.save(buf, format="PNG")
