@@ -1,5 +1,5 @@
 {
-  "_note": "Walmart, clean flatbed scan, 25 line items ('# ITEMS SOLD 25' confirms the count). Traps: a 'COUPON 23100  1.00-O' discount line that must stay out of items (94.62 line sum - 1.00 coupon = 93.62 printed subtotal), four identical STKO SUNFLWR rows that must not be collapsed, and department letters (X/O/N/F/I) trailing each price.",
+  "_note": "Walmart, clean flatbed scan, 25 line items ('# ITEMS SOLD 25' confirms the count). Traps: a 'COUPON 23100  1.00-O' discount line that must come back as a negative row (94.62 of goods - 1.00 coupon = 93.62 printed subtotal), four identical STKO SUNFLWR rows that must not be collapsed, and department letters (X/O/N/F/I) trailing each price.",
   "store": "Walmart",
   "date": "2017-07-28",
   "total": 98.21,
@@ -128,6 +128,11 @@
       "name": "DRY DOG",
       "qty": 1,
       "price": 12.44
+    },
+    {
+      "name": "COUPON 23100",
+      "qty": 1,
+      "price": -1.00
     }
   ]
 }

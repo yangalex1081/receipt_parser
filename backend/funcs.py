@@ -271,6 +271,25 @@ def normalize_output(raw):
         "tip", "gratuity", "discount", "rounding", "change", "cash", "payment",
     }
 
+    # Sub-lines some receipts print under a row to explain its price. They
+    # describe the row above; they are not purchases.
+    SUB_LINES = {"reg price", "regular price", "unit price", "each"}
+
+    # Discounts are real money, so unlike summary rows they are kept — as a
+    # negative amount, which is what makes the rows add up to the printed
+    # subtotal and lets the saving be assigned to whoever bought the item.
+    # Receipts print the minus in every position ("1.00-", "-1.00", none at
+    # all), so the sign is set here rather than trusted.
+    DISCOUNT = re.compile(r"\b(coupon|discount|promo|promotion|voucher|markdown)\b")
+
+    # How the bill was paid. A payment line repeats the total, so listing it as
+    # an item doubles the bill — the Starbucks receipt in the eval set does
+    # exactly this ("Sbux Card 4.95" under a 4.95 drink).
+    PAYMENT = re.compile(
+        r"\b(card|visa|mastercard|amex|debit|credit|cash|tender|tendered|payment"
+        r"|paid|eftpos|octopus|alipay|apple pay|google pay)\b"
+    )
+
     # --- Parse ---------------------------------------------------------------
     data = extract_json(raw) if isinstance(raw, str) else raw
     if isinstance(data, list):
@@ -290,23 +309,33 @@ def normalize_output(raw):
             continue
 
         name = str(d.get("name") or "").strip()
-        if re.sub(r"[^a-z ]", "", name.lower()).strip() in SUMMARY_ROWS:
+        qty = to_int(d.get("qty"))
+        # The line total for the row, never the unit price — the frontend sums
+        # this column as-is. See PROMPT.
+        price = to_float(d.get("price"))
+
+        # "Soju x 2" with qty 2: the count was copied into the name as well.
+        # Only stripped when it agrees with qty, so "Vitamin D x 1000" stays.
+        counted = re.fullmatch(r"(.+?)\s*[x×]\s*(\d+)", name, flags=re.I)
+        if counted and int(counted.group(2)) == qty:
+            name = counted.group(1).strip()
+
+        key = re.sub(r"[^a-z ]", "", name.lower()).strip()
+        if key in SUMMARY_ROWS or key in SUB_LINES:
             continue
+
+        if DISCOUNT.search(name.lower()):
+            if price == 0:
+                # "Discount: Comp (100% off)   0.00" — an annotation, no money.
+                continue
+            price = -abs(price)
 
         # Receipt printers are all-caps. Title-case those so the table is
         # readable, but leave anything already mixed-case as the model read it.
         if name.isupper():
             name = re.sub(r"[\w']+", lambda m: m.group(0).capitalize(), name)
 
-        items.append(
-            {
-                "name": name,
-                "qty": to_int(d.get("qty")),
-                # The line total for the row, never the unit price — the
-                # frontend sums this column as-is. See PROMPT.
-                "price": to_float(d.get("price")),
-            }
-        )
+        items.append({"name": name, "qty": qty, "price": price})
 
     # --- Totals --------------------------------------------------------------
     #
@@ -315,6 +344,21 @@ def normalize_output(raw):
     # which is what a missed — or, now that the model is generative, an
     # invented — line item looks like.
     printed_total = to_float(data.get("total")) or None
+
+    # Drop payment lines. Name alone is not enough — a gift card is a thing
+    # people buy — so the row must also repeat the printed total, which a
+    # purchase sitting alongside other purchases cannot do.
+    if printed_total and len(items) > 1:
+        kept = [
+            i
+            for i in items
+            if not (
+                PAYMENT.search(i["name"].lower())
+                and abs(i["price"] - printed_total) < 0.005
+            )
+        ]
+        if kept:
+            items = kept
 
     line_sum = sum(i["price"] for i in items)
 

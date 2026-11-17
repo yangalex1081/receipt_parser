@@ -535,6 +535,70 @@ def test_normalize_keeps_items_that_merely_look_like_summaries(normalize):
     assert out["line_sum"] == 37.0
 
 
+def test_normalize_drops_a_payment_line_that_repeats_the_total(normalize):
+    """The Starbucks receipt in the eval set, verbatim: the model lists the
+    card payment as a second item and the bill doubles."""
+    out = normalize(
+        '{"store": "STARBUCKS", "total": 4.95, "items": ['
+        '{"name": "Vt Pep Mocha", "qty": 1, "price": 4.95},'
+        '{"name": "Sbux Card", "qty": 1, "price": 4.95}]}'
+    )
+    assert [i["name"] for i in out["items"]] == ["Vt Pep Mocha"]
+    assert out["line_sum"] == 4.95
+
+
+def test_normalize_keeps_a_purchased_gift_card(normalize):
+    """"Card" in the name is not enough — it must also repeat the total."""
+    out = normalize(
+        '{"total": 30.00, "items": ['
+        '{"name": "Gift Card", "qty": 1, "price": 25.00},'
+        '{"name": "Latte", "qty": 1, "price": 5.00}]}'
+    )
+    assert len(out["items"]) == 2
+    # and a receipt that is *only* a gift card keeps its one row
+    out = normalize('{"total": 25.00, "items": [{"name": "Gift Card", "qty": 1, "price": 25.00}]}')
+    assert len(out["items"]) == 1
+
+
+def test_normalize_keeps_discounts_as_negative_rows(normalize):
+    """Walmart prints "COUPON 23100  1.00-". Kept negative, the rows add up to
+    the printed subtotal; dropped or left positive, they never can."""
+    out = normalize(
+        '{"total": 9.00, "items": ['
+        '{"name": "DRY DOG", "qty": 1, "price": 10.00},'
+        '{"name": "COUPON 23100", "qty": 1, "price": 1.00}]}'
+    )
+    assert out["items"][1] == {"name": "Coupon 23100", "qty": 1, "price": -1.0}
+    assert out["line_sum"] == 9.0
+    # already negative stays negative
+    out = normalize('{"items": [{"name": "Member discount", "qty": 1, "price": -2.5}]}')
+    assert out["items"][0]["price"] == -2.5
+
+
+def test_normalize_drops_price_annotation_sub_lines(normalize):
+    """The bar receipt prints "Reg price 12.00 / Discount: Comp (100% off)"
+    under a comped row. Neither is a purchase."""
+    out = normalize(
+        '{"items": ['
+        '{"name": "Soju x 2", "qty": 2, "price": 0},'
+        '{"name": "Reg price", "qty": 1, "price": 12},'
+        '{"name": "Discount: Comp (100% off)", "qty": 1, "price": 0},'
+        '{"name": "Soju x 1", "qty": 1, "price": 6}]}'
+    )
+    assert out["items"] == [
+        {"name": "Soju", "qty": 2, "price": 0.0},
+        {"name": "Soju", "qty": 1, "price": 6.0},
+    ]
+
+
+def test_normalize_strips_a_count_only_when_it_matches_qty(normalize):
+    out = normalize(
+        '{"items": [{"name": "Underberg x 4", "qty": 4, "price": 24},'
+        ' {"name": "Vitamin D x 1000", "qty": 1, "price": 9}]}'
+    )
+    assert [i["name"] for i in out["items"]] == ["Underberg", "Vitamin D x 1000"]
+
+
 def test_normalize_coerces_messy_numbers(normalize):
     """Bare numbers are demanded; currency symbols and separators arrive."""
     out = normalize(
