@@ -36,8 +36,11 @@ _TOKEN_PIXELS = (IMAGE_PATCH_SIZE * 2) ** 2
 # therefore the warm parse latency) bounded.
 MAX_PIXELS = 1600 * _TOKEN_PIXELS
 
-# Long receipts run to ~40 items; 1024 tokens covers that with margin.
-MAX_NEW_TOKENS = 1024
+# Measured on the eval set, a reply costs ~33 tokens per item plus ~50 for the
+# header (Walmart: 25 items, 874 tokens), so the old cap of 1024 cut off at about
+# 29 items — and a cut-off reply used to parse to nothing at all. 2560 covers
+# ~75 items; generation stops at EOS, so short receipts pay nothing for it.
+MAX_NEW_TOKENS = 2560
 
 # Unlike Donut, this model reads instructions — the schema below is the only
 # thing defining the output, so it has to be exact.
@@ -191,6 +194,7 @@ def normalize_output(raw):
       "total": float,
       "line_sum": float,
       "printed_total": float | None,
+      "truncated": bool,
       "items": [{"name": str, "qty": int, "price": float}, ...]
     }
 
@@ -204,34 +208,67 @@ def normalize_output(raw):
     import re
 
     def extract_json(text):
-        """Extract and parse the first JSON object from messy text.
+        """Parse the first JSON object in messy text. Returns (data, truncated).
 
         The model is told to return bare JSON and usually does, but "usually"
         is the operative word — ```json fences and a leading sentence of
         commentary are the two failure modes worth surviving.
+
+        The third is a reply cut off at MAX_NEW_TOKENS partway through a long
+        receipt. That is not valid JSON, but everything before the cut is
+        good: the object is closed after the last complete element and parsed
+        anyway, so 60 rows read correctly are not thrown away over a 61st.
         """
         if not isinstance(text, str):
-            return None
+            return None, False
         text = text.strip()
         try:
-            return json.loads(text)
+            return json.loads(text), False
         except Exception:
             pass
         start = text.find("{")
         if start == -1:
-            return None
-        depth = 0
+            return None, False
+
+        # Walk the text tracking open brackets, skipping over string contents
+        # so a brace inside an item name is not mistaken for structure.
+        stack = []
+        in_string = escaped = False
+        # (end index, brackets still open) after the last nested value closed.
+        last_complete = None
         for i in range(start, len(text)):
-            if text[i] == "{":
-                depth += 1
-            elif text[i] == "}":
-                depth -= 1
-                if depth == 0:
+            ch = text[i]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch in "{[":
+                stack.append(ch)
+            elif ch in "}]":
+                if not stack:
+                    break
+                stack.pop()
+                if not stack:
                     try:
-                        return json.loads(text[start : i + 1])
+                        return json.loads(text[start : i + 1]), False
                     except Exception:
-                        break
-        return None
+                        return None, False
+                last_complete = (i + 1, list(stack))
+
+        if last_complete is None:
+            return None, False
+        end, still_open = last_complete
+        closers = "".join("}" if b == "{" else "]" for b in reversed(still_open))
+        try:
+            return json.loads(text[start:end] + closers), True
+        except Exception:
+            return None, False
 
     def to_float(val):
         if val is None:
@@ -272,7 +309,7 @@ def normalize_output(raw):
     }
 
     # --- Parse ---------------------------------------------------------------
-    data = extract_json(raw) if isinstance(raw, str) else raw
+    data, truncated = extract_json(raw) if isinstance(raw, str) else (raw, False)
     if isinstance(data, list):
         # A bare array of items, without the wrapper object.
         data = {"items": data}
@@ -325,6 +362,9 @@ def normalize_output(raw):
         "total": printed_total if printed_total else line_sum,
         "line_sum": line_sum,
         "printed_total": printed_total,
+        # True when the reply was cut off and only the rows before the cut were
+        # recovered — the table is incomplete and the frontend says so.
+        "truncated": truncated,
         "items": items,
     }
 

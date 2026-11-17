@@ -575,6 +575,47 @@ def test_normalize_survives_junk(normalize):
         assert out["store"] == ""
 
 
+# A reply that hit MAX_NEW_TOKENS partway through the third row.
+CUT_OFF_REPLY = """{
+  "store": "COSTCO",
+  "date": "2026-08-14",
+  "total": 412.07,
+  "items": [
+    {"name": "KS WATER 40PK", "qty": 1, "price": 3.99},
+    {"name": "ROTISSERIE {HOT}", "qty": 2, "price": 9.98},
+    {"name": "KS PAPER TOW"""
+
+
+def test_normalize_salvages_a_reply_cut_off_at_the_token_cap(normalize):
+    """A long receipt that runs out of tokens is not valid JSON. The rows that
+    were read must survive — before this, one missing bracket emptied the table."""
+    out = normalize(CUT_OFF_REPLY)
+    assert [i["name"] for i in out["items"]] == ["Ks Water 40pk", "Rotisserie {Hot}"]
+    assert out["store"] == "COSTCO"
+    assert out["printed_total"] == 412.07
+    assert out["truncated"] is True
+
+
+def test_normalize_does_not_flag_a_complete_reply_as_truncated(normalize):
+    assert normalize(QWEN_REPLY)["truncated"] is False
+    assert normalize("```json\n" + QWEN_REPLY + "\n```")["truncated"] is False
+
+
+def test_normalize_ignores_braces_inside_names(normalize):
+    """Bracket matching must skip string contents, or '}' in a name ends the
+    object early."""
+    out = normalize(
+        'Here you go: {"total": 2, "items": [{"name": "A } B", "qty": 1, "price": 2}]} done'
+    )
+    assert out["items"] == [{"name": "A } B", "qty": 1, "price": 2.0}]
+    assert out["truncated"] is False
+
+
+def test_token_cap_covers_a_long_receipt(funcs_mod):
+    """~33 tokens per row measured on the eval set; a 60-row Costco run has to fit."""
+    assert funcs_mod.MAX_NEW_TOKENS >= 60 * 33 + 100
+
+
 def test_normalize_output_shape_is_stable(normalize):
     """ReceiptTable reads these keys; adding is fine, removing is not."""
     out = normalize(QWEN_REPLY)
