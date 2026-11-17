@@ -55,18 +55,25 @@ git clone https://github.com/yangalex1081/receipt_parser.git
 # Frontend setup
 cd receipt-parser-frontend
 npm install
-npm run dev
+cp .env.example .env    # then fill in NETLIFY_SIGN_SECRET
+npm run dev             # http://localhost:3000, proxies /api/* to Modal
 
-# Backend setup
-cd receipt-parser-api
-modal deploy api.py
+# Backend setup (from the repo root)
+modal deploy backend/gateway.py
 
+# Backend tests
+pip install -r backend/requirements-dev.txt
+pytest
 ```
 
+See [ARCHITECTURE.md](ARCHITECTURE.md) for how the pieces fit together.
+
 ## Security
-- All backend calls require an API key stored in `.env` (`VITE_API_KEY`)
-- Modal secrets are used for the same API key for authorisation
-- No sensitive data is logged or stored at all
+- The browser holds no credentials. It calls `/api/*` on the Netlify site, which signs each request and forwards it to Modal.
+- Modal rejects anything without a valid signature, so the backend cannot be called directly.
+- The one shared secret (`NETLIFY_SIGN_SECRET`) lives only in Netlify's environment and a Modal secret.
+- Uploads are rate-limited per IP.
+- Receipt images are not stored. Modal keeps each parsed result for up to 7 days so the page can fetch it.
 
 ## Contact
 Built by Alex Yang
