@@ -61,7 +61,7 @@ sequenceDiagram
     participant G as FastAPI gateway (Modal)
     participant W as GPU worker (Modal)
 
-    B->>B: downscale image to <=1600px JPEG
+    B->>B: downscale image to <=2MP JPEG
     B->>N: POST /api/parse (multipart, no credentials)
     N->>N: rate limit (6/min/IP), sign with HS256
     N->>G: POST /parse + x-nf-sign
@@ -121,7 +121,7 @@ Backend files:
 
 **Client-side downscaling.** Netlify caps request bodies at 6MB, ~4.5MB once
 binary is base64-encoded. Phone photos routinely exceed that, so `UploadForm`
-re-encodes to at most 1600px on the long edge at JPEG q=0.85 before upload.
+re-encodes to at most 2MP (whatever the aspect ratio) at JPEG q=0.85 before upload.
 Images already under 2MB with no resize needed are passed through untouched.
 
 **Polling.** Starts at 1.5s, backs off ×1.3 to a 3s ceiling, gives up at 150s.
@@ -197,7 +197,7 @@ to load the ML stack on its slim image and fail.
 
 | Function | GPU | Role |
 |---|---|---|
-| `preprocess_image` | no | EXIF-correct orientation, resize ≤1920px, → PNG |
+| `preprocess_image` | no | EXIF-correct orientation, resize ≤2×`MAX_PIXELS`, → PNG |
 | `transcript_receipt` | L4 | Qwen3-VL inference, greedy, `retries=3` |
 | `normalize_output` | no | Parse the model's JSON reply, coerce, cross-check totals |
 | `process_receipt` | L4 | Orchestrates the three above via `.local()` |

@@ -7,14 +7,21 @@ const API_BASE = "/api";
 
 // Netlify functions/redirects cap request bodies at 6MB, ~4.5MB once binary is
 // base64-encoded. Phone photos routinely exceed that, so downscale first.
-const MAX_DIMENSION = 1600;
+//
+// The cap is on total pixels, not the long edge. The model reads at most
+// ~1.6MP whatever the shape (MAX_PIXELS in funcs.py), so 2MP sends everything
+// it can use. A long-edge cap wastes that on exactly the receipts that need
+// it: a long till roll at 1600px tall is only ~0.5MP, and its small print is
+// gone before the model ever sees it. MAX_DIMENSION is only a sanity bound.
+const MAX_PIXELS = 2_000_000;
+const MAX_DIMENSION = 4096;
 const JPEG_QUALITY = 0.85;
 
 const POLL_START_MS = 1500;
 const POLL_MAX_MS = 3000;
 const POLL_TIMEOUT_MS = 150000; // cold start measured at ~66s; leave headroom
 
-/** Downscale to at most MAX_DIMENSION on the long edge and re-encode as JPEG. */
+/** Downscale to at most MAX_PIXELS and re-encode as JPEG. */
 const downscaleImage = (file) =>
   new Promise((resolve, reject) => {
     const img = new Image();
@@ -23,7 +30,11 @@ const downscaleImage = (file) =>
     img.onload = () => {
       URL.revokeObjectURL(url);
 
-      const scale = Math.min(1, MAX_DIMENSION / Math.max(img.width, img.height));
+      const scale = Math.min(
+        1,
+        Math.sqrt(MAX_PIXELS / (img.width * img.height)),
+        MAX_DIMENSION / Math.max(img.width, img.height)
+      );
       if (scale === 1 && file.size < 2 * 1024 * 1024) {
         resolve(file); // already small enough, don't re-encode
         return;

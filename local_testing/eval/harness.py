@@ -91,7 +91,7 @@ def _sim(a: str, b: str) -> float:
 def prepare_image(path: Path, cap: bool = True) -> bytes:
     """Put the image through production preprocessing, then production's cap.
 
-    preprocess_image handles EXIF rotation and the 1920px long-edge cap. On
+    preprocess_image handles EXIF rotation and a coarse pixel-count cap. On
     Modal the processor then downsamples to MAX_PIXELS; Ollama has no equivalent
     knob, so that second step is applied here explicitly. Without it the local
     model would read a sharper image than the deployed one and every local score
