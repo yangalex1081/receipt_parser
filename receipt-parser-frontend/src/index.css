@@ -83,15 +83,10 @@ a {
 
 /* --- Layout -------------------------------------------------------------- */
 
-.app-header {
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border);
-}
-
 .app-body {
   display: flex;
   align-items: stretch;
-  min-height: calc(100vh - 70px);
+  min-height: 100vh;
 }
 
 .pane {

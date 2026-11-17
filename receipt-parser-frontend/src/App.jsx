@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import axios from "axios";
 import UploadForm from "./components/UploadForm";
 import ReceiptTable from "./components/ReceiptTable";
-import HealthCheck from "./components/HealthCheck";
 
 const EMPTY = { store: "", date: "", total: 0, items: [] };
 
@@ -10,6 +10,13 @@ const App = () => {
   const [parsedData, setParsedData] = useState(EMPTY);
   // The untouched parser output, so edits can be discarded.
   const [lastParsed, setLastParsed] = useState(null);
+
+  // Start the GPU container as soon as the page opens, so the model loads
+  // while the user is choosing a photo instead of after they upload it.
+  // Best-effort: if it fails, the upload simply pays the cold start itself.
+  useEffect(() => {
+    axios.post("/api/warm").catch(() => {});
+  }, []);
 
   const handleParsed = (data) => {
     setParsedData(data);
@@ -22,10 +29,6 @@ const App = () => {
 
   return (
     <div>
-      <header className="app-header">
-        <HealthCheck />
-      </header>
-
       <div className="app-body">
         <div className="pane">
           <h1>🧾 Receipt Parser</h1>

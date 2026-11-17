@@ -25,6 +25,20 @@
     window_size = 60
     aggregate_by = ["ip", "domain"]
 
+# --- Warm-up: starts the GPU container when the page opens ------------------
+# Costs GPU time like /parse, and one call per page load is all that is needed.
+[[redirects]]
+  from = "/api/warm"
+  to = "https://yangalex1081--receipt-parser-fastapi-app.modal.run/warm"
+  status = 200
+  force = true
+  signed = "NETLIFY_SIGN_SECRET"
+
+  [redirects.rate_limit]
+    window_limit = 3
+    window_size = 60
+    aggregate_by = ["ip", "domain"]
+
 # --- Poll: cheap status check, called repeatedly while a job runs -----------
 # Generous, because a cold start (~66s) at a 3s poll interval is ~22 requests
 # for one legitimate upload.

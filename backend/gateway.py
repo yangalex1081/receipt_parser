@@ -77,6 +77,15 @@ async def health():
     return {"status": "ok", "message": "Receipt Parser API healthy"}
 
 
+# Start the GPU container without parsing anything. The page calls this on
+# load so the model is loading while the user picks a photo. Signed, because
+# unlike /health it costs GPU time; returns at once and the result is discarded.
+@web_app.post("/warm")
+async def warm(_claims: dict = Depends(verify_netlify_signature)):
+    process_receipt.spawn(b"")
+    return {"status": "warming"}
+
+
 # Kick off a parse. Returns immediately with a call id — the GPU job can take
 # ~65s from cold, far longer than the proxy will hold a connection.
 @web_app.post("/parse")

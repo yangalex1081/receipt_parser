@@ -43,7 +43,6 @@ src/
   components/
     UploadForm.jsx           select, downscale, upload, poll for the result
     ReceiptTable.jsx         editable rows, per-buyer totals
-    HealthCheck.jsx          calls /api/health
   index.css                  theme tokens and base styles
 ```
 

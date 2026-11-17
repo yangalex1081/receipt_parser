@@ -71,6 +71,7 @@ live = pytest.mark.live
 SIGNED_ROUTES = [
     ("get", "/result/fc-TEST123"),
     ("post", "/parse"),
+    ("post", "/warm"),
 ]
 
 
@@ -291,6 +292,20 @@ def test_parse_rejects_oversize_upload(client, sign):
     big = {"file": ("big.jpg", b"x" * (7 * 1024 * 1024), "image/jpeg")}
     r = client.post("/parse", files=big, headers=sign())
     assert r.status_code == 413
+
+
+# ==========================================================================
+# OFFLINE — POST /warm
+# ==========================================================================
+
+def test_warm_spawns_a_model_load_only_job(client, gw, sign):
+    """Empty bytes are the signal: process_receipt loads the model and returns.
+    It must be process_receipt itself — a different function has a different
+    container pool, and warming that would not help the parse."""
+    r = client.post("/warm", headers=sign())
+    assert r.status_code == 200
+    assert r.json() == {"status": "warming"}
+    assert gw.process_receipt.spawn_calls == [((b"",), {})]
 
 
 # ==========================================================================
@@ -803,6 +818,23 @@ def test_process_receipt_survives_a_junk_generation(funcs_mod, stub_transcript):
     out = funcs_mod.process_receipt.local(encode(PILImage.new("RGB", (60, 80))))
     assert out["items"] == []
     assert out["total"] == 0
+
+
+def test_process_receipt_with_no_image_only_loads_the_model(
+    funcs_mod, stub_transcript, monkeypatch
+):
+    """The warm-up path: load the weights, touch nothing else."""
+    loads = []
+    monkeypatch.setattr(funcs_mod, "setup", lambda: loads.append(1))
+    assert funcs_mod.process_receipt.local(b"") == {"status": "warm"}
+    assert loads == [1]
+    assert stub_transcript.received is None
+
+
+def test_the_container_outlives_modals_default_idle_window(funcs_mod):
+    """Modal's default is 60s: a second receipt two minutes later would pay
+    the whole cold start again."""
+    assert funcs_mod.SCALEDOWN_WINDOW >= 300
 
 
 # --------------------------------------------------------------------------
