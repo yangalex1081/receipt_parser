@@ -103,10 +103,9 @@ Vite + React 19, deployed to Netlify.
 
 | File | Role |
 |---|---|
-| `src/App.jsx` | Layout; owns `parsedData` plus a pristine `lastParsed` copy |
+| `src/App.jsx` | Layout; owns `parsedData` plus a pristine `lastParsed` copy; calls `/api/warm` on load |
 | `src/components/UploadForm.jsx` | File select, downscale, upload, poll, progress/error UI |
 | `src/components/ReceiptTable.jsx` | Editable item table, per-buyer totals |
-| `src/components/HealthCheck.jsx` | Calls `/api/health` |
 | `netlify.toml` | Proxy rules, signing, rate limits |
 
 Backend files:
@@ -149,6 +148,7 @@ in the `x-nf-sign` header:
 |---|---|---|
 | `/api/parse` | 6 / 60s | Each accepted request costs GPU time |
 | `/api/result/*` | 120 / 60s | One cold-start upload polls ~22 times |
+| `/api/warm` | 3 / 60s | Starts a GPU container; once per page load is enough |
 | `/api/health` | 30 / 60s | Cheap, but not free |
 
 Exceeding a limit returns `429`, which `UploadForm` surfaces as a readable
@@ -172,6 +172,7 @@ on the same app, so `modal deploy backend/gateway.py` covers everything.
 | `GET /health` | public | Uptime probe |
 | `POST /parse` | signed | Validate image, `spawn()` job, return `call_id` |
 | `GET /result/{call_id}` | signed | Poll — `pending` / `done` / `410 expired` |
+| `POST /warm` | signed | Spawn a model-load-only job so the container is up before the upload |
 
 `verify_netlify_signature` is a **FastAPI dependency**, not an HTTP middleware.
 This is deliberate: `HTTPException` raised inside a middleware bypasses FastAPI's
@@ -204,6 +205,15 @@ to load the ML stack on its slim image and fail.
 
 `process_receipt` invokes the others with `.local()`, so the whole pipeline runs
 inside one GPU container rather than as three remote hops.
+
+**Cold start.** Loading the model dominates a cold parse, so three things keep
+it out of the user's way. The page calls `/api/warm` on load, which spawns
+`process_receipt` with empty bytes: it loads the model and returns, so the
+container is usually warm by the time a photo is chosen. `scaledown_window=300`
+keeps that container for five idle minutes (Modal's default is 60s), so a
+second receipt does not pay again. `max_containers=1` makes a parse that
+arrives mid-warm-up queue behind it rather than cold-start a second container.
+The cost is that every page visit buys up to five minutes of L4 time (~$0.07).
 
 These functions have no web decorator (`@modal.asgi_app()` / web endpoint), so
 they are not internet-reachable at all — invoking them requires authenticated

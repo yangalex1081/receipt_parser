@@ -110,7 +110,7 @@ const UploadForm = ({ onParsed }) => {
       delay = Math.min(delay * 1.3, POLL_MAX_MS);
 
       const elapsed = Math.round((Date.now() - startedAt) / 1000);
-      setStatus(`Parsing… ${elapsed}s (first run of the day can take ~60s)`);
+      setStatus(`Parsing… ${elapsed}s (can take about a minute if the parser was asleep)`);
 
       let res;
       try {

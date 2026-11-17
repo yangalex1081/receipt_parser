@@ -329,18 +329,39 @@ def normalize_output(raw):
     }
 
 
+# How long a container stays up after its last request. Modal's default is 60s,
+# which meant a second receipt a couple of minutes after the first paid the
+# full cold start again. Five idle minutes on an L4 costs about $0.07.
+SCALEDOWN_WINDOW = 300
+
+
 @app.function(
     image=inference_image,
     gpu=INFERENCE_GPU,
     retries=3,
     volumes={MODEL_CACHE_PATH: model_cache},
+    scaledown_window=SCALEDOWN_WINDOW,
+    # One container, so a parse that arrives while the warm-up call is still
+    # loading the model queues behind it instead of cold-starting a second
+    # container alongside. It also puts a ceiling on GPU spend.
+    max_containers=1,
 )
 def process_receipt(image_bytes: bytes):
     """Full pipeline: preprocess -> transcript -> normalize
 
     Runs the three stages with .local() so they share one GPU container rather
     than making three remote hops.
+
+    Called with empty bytes it only loads the model. The gateway's /warm route
+    does that when the page opens, so the cold start overlaps with the user
+    choosing a photo rather than following the upload. It has to be this
+    function and not a separate one: Modal keeps a container pool per function,
+    and warming a different pool would not help the parse.
     """
+    if not image_bytes:
+        setup()
+        return {"status": "warm"}
+
     preprocessed = preprocess_image.local(image_bytes)
     raw = transcript_receipt.local(preprocessed)
     normalized = normalize_output.local(raw)
