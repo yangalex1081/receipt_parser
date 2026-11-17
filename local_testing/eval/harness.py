@@ -285,7 +285,13 @@ def score_one(
         correct=correct,
         name_only=len(matched) - correct,
         qty_ok=qty_ok,
-        junk=sum(1 for p in pred_items if JUNK.search(str(p.get("name", "")))),
+        # Negative rows are discounts normalize_output kept on purpose; they are
+        # scored as ordinary rows against the ground truth, not counted as junk.
+        junk=sum(
+            1
+            for p in pred_items
+            if JUNK.search(str(p.get("name", ""))) and (p.get("price") or 0) >= 0
+        ),
         total_ok=(
             None
             if truth.get("total") is None

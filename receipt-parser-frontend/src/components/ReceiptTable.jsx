@@ -130,7 +130,6 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
                     <input
                       type="number"
                       className="cell-input"
-                      min="0"
                       step="0.01"
                       value={item.price ?? 0}
                       onChange={(e) =>
