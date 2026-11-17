@@ -3,7 +3,7 @@ import UploadForm from "./components/UploadForm";
 import ReceiptTable from "./components/ReceiptTable";
 import HealthCheck from "./components/HealthCheck";
 
-const EMPTY = { store: "", date: "", total: 0, items: [] };
+const EMPTY = { store: "", date: "", total: 0, tax: 0, tip: 0, items: [] };
 
 const App = () => {
   // The working copy the table edits.
