@@ -47,24 +47,44 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
 
   const lineTotal = (i) => parseFloat(i.price) || 0;
 
-  const totalAmount = useMemo(
+  const itemsTotal = useMemo(
     () => items.reduce((sum, i) => sum + lineTotal(i), 0),
     [items]
   );
 
+  // Rows sum to the subtotal; tax (including service charges) and tip sit on
+  // top. Both are editable — a tip is often written in by hand and never
+  // printed. They only exist on the object shape, not the bare-array one.
+  const hasCharges = !Array.isArray(parsedData);
+  const tax = hasCharges ? parseFloat(parsedData?.tax) || 0 : 0;
+  const tip = hasCharges ? parseFloat(parsedData?.tip) || 0 : 0;
+  const charges = tax + tip;
+  const totalAmount = itemsTotal + charges;
+
+  const handleCharge = (field, value) => {
+    if (onChange && hasCharges) onChange({ ...parsedData, [field]: value });
+  };
+
+  // Each buyer pays tax and tip in proportion to what they ordered, so the
+  // per-buyer figures add up to the amount actually charged.
   const totalsByBuyer = useMemo(() => {
     const map = {};
     for (const i of items) {
       const buyer = i.buyer?.trim() || "Unassigned";
       map[buyer] = (map[buyer] || 0) + lineTotal(i);
     }
+    if (itemsTotal > 0 && charges !== 0) {
+      for (const buyer of Object.keys(map)) {
+        map[buyer] += (map[buyer] / itemsTotal) * charges;
+      }
+    }
     return map;
-  }, [items]);
+  }, [items, itemsTotal, charges]);
 
   // The total printed on the receipt itself, when the parser could read it.
-  // A gap between that and the sum of the rows usually means a line was
+  // Rows + tax + tip should reproduce it; a gap usually means a line was
   // missed — the most common extraction failure — so it is worth showing.
-  const printedTotal = Array.isArray(parsedData) ? null : parsedData?.printed_total;
+  const printedTotal = hasCharges ? parsedData?.printed_total : null;
   const hasPrintedTotal = typeof printedTotal === "number" && printedTotal > 0;
   const difference = hasPrintedTotal ? printedTotal - totalAmount : 0;
   const totalsDisagree = hasPrintedTotal && Math.abs(difference) > 0.005;
@@ -171,6 +191,33 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
           </tbody>
           {items.length > 0 && (
             <tfoot>
+              {hasCharges && (
+                <tr>
+                  <td colSpan="5" className="total-row">
+                    <div className="charges">
+                    <span>Items: ${itemsTotal.toFixed(2)}</span>
+                    {[
+                      ["tax", "Tax & service"],
+                      ["tip", "Tip"],
+                    ].map(([field, label]) => (
+                      <label key={field} className="charge">
+                        {label} $
+                        <input
+                          type="number"
+                          className="cell-input charge-input"
+                          min="0"
+                          step="0.01"
+                          value={parsedData?.[field] ?? 0}
+                          onChange={(e) =>
+                            handleCharge(field, parseFloat(e.target.value) || 0)
+                          }
+                        />
+                      </label>
+                    ))}
+                    </div>
+                  </td>
+                </tr>
+              )}
               <tr>
                 <td colSpan="5" className="total-row">
                   <strong>Total: ${totalAmount.toFixed(2)}</strong>
@@ -179,8 +226,8 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
                       className="total-mismatch"
                       title={
                         difference > 0
-                          ? "The receipt total is higher than these rows — a line may be missing."
-                          : "These rows exceed the receipt total — a line may be duplicated."
+                          ? "The receipt total is higher than items + tax + tip — a line may be missing."
+                          : "Items + tax + tip exceed the receipt total — a line may be duplicated."
                       }
                     >
                       ⚠ receipt says ${printedTotal.toFixed(2)} (
@@ -194,6 +241,7 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
                 <tr key={buyer}>
                   <td colSpan="5" className="buyer-row">
                     {buyer}: ${total.toFixed(2)}
+                    {charges > 0 && " (incl. tax & tip)"}
                   </td>
                 </tr>
               ))}

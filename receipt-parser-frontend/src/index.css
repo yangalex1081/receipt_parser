@@ -281,6 +281,23 @@ a {
   padding: 16px;
 }
 
+.charges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  align-items: baseline;
+  color: var(--text-muted);
+}
+
+.charge {
+  white-space: nowrap;
+}
+
+.receipt-table .charge-input {
+  width: 5.5em;
+  margin-left: 2px;
+}
+
 .total-row {
   border-top: 1px solid var(--border);
   padding: 8px;

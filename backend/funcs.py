@@ -54,6 +54,9 @@ Schema:
   "store": "merchant name as printed, or \\"\\" if unreadable",
   "date": "purchase date as YYYY-MM-DD, or \\"\\" if unreadable",
   "total": grand total printed on the receipt, as a number,
+  "subtotal": subtotal printed before tax and service, or 0 if none is printed,
+  "tax": every tax and service-charge line added together, or 0,
+  "tip": tip or gratuity actually charged, or 0,
   "items": [
     {"name": "item name as printed", "qty": integer, "price": line total}
   ]
@@ -67,7 +70,8 @@ price is 7.50, not 2.50.
 - Copy names exactly as printed. Do not translate them, expand abbreviations, \
 correct spelling, or add items you cannot see.
 - Do NOT put subtotal, tax, service charge, tip, discount, rounding, payment or \
-change lines in "items". The grand total goes in "total" and nowhere else.
+change lines in "items". The grand total goes in "total" and nowhere else; \
+tax and service charges go in "tax", a tip in "tip".
 - Write numbers bare: no currency symbols, no thousands separators, a period \
 for the decimal point.
 - Use "" for a string you cannot read and 0 for a number you cannot read. \
@@ -191,6 +195,9 @@ def normalize_output(raw):
       "total": float,
       "line_sum": float,
       "printed_total": float | None,
+      "subtotal": float | None,
+      "tax": float,
+      "tip": float,
       "items": [{"name": str, "qty": int, "price": float}, ...]
     }
 
@@ -318,13 +325,25 @@ def normalize_output(raw):
 
     line_sum = sum(i["price"] for i in items)
 
+    # Items sum to the subtotal, not the grand total: tax, service and tip sit
+    # between the two. Carrying them separately lets the frontend check
+    # line_sum + tax + tip against the printed total (rather than raising a
+    # false alarm on every taxed receipt) and share them out between buyers.
+    # abs() because these are charges; a model that copies a trailing minus
+    # sign off the receipt must not turn tax into a refund.
+    tax = abs(to_float(data.get("tax")))
+    tip = abs(to_float(data.get("tip")))
+
     return {
         "store": str(data.get("store") or "").strip(),
         "date": str(data.get("date") or "").strip(),
-        # What the receipt says when we could read it, else the sum of the rows.
-        "total": printed_total if printed_total else line_sum,
+        # What the receipt says when we could read it, else rows plus charges.
+        "total": printed_total if printed_total else line_sum + tax + tip,
         "line_sum": line_sum,
         "printed_total": printed_total,
+        "subtotal": to_float(data.get("subtotal")) or None,
+        "tax": tax,
+        "tip": tip,
         "items": items,
     }
 

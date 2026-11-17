@@ -575,6 +575,46 @@ def test_normalize_survives_junk(normalize):
         assert out["store"] == ""
 
 
+TAXED_REPLY = """{
+  "store": "Some Bar",
+  "date": "2025-09-24",
+  "total": 174.20,
+  "subtotal": 160.00,
+  "tax": 14.20,
+  "tip": 0,
+  "items": [
+    {"name": "Pilsner", "qty": 2, "price": 16.00},
+    {"name": "Curieux", "qty": 5, "price": 144.00}
+  ]
+}"""
+
+
+def test_normalize_carries_tax_and_tip_separately_from_the_rows(normalize):
+    """Rows sum to the subtotal. Tax and tip are what close the gap to the
+    printed total, so they must arrive as their own fields — not as rows, and
+    not silently missing."""
+    out = normalize(TAXED_REPLY)
+    assert out["subtotal"] == 160.00
+    assert out["tax"] == 14.20
+    assert out["tip"] == 0.0
+    assert out["line_sum"] == 160.00
+    assert abs(out["line_sum"] + out["tax"] + out["tip"] - out["printed_total"]) < 0.005
+
+
+def test_normalize_defaults_tax_and_tip_when_the_model_omits_them(normalize):
+    out = normalize(QWEN_REPLY)
+    assert out["tax"] == 0.0 and out["tip"] == 0.0
+    assert out["subtotal"] is None
+
+
+def test_normalize_coerces_messy_tax_and_tip(normalize):
+    out = normalize('{"total": 0, "tax": "-$1.50", "tip": "HK$10", "items": '
+                    '[{"name": "A", "qty": 1, "price": 20}]}')
+    assert out["tax"] == 1.5 and out["tip"] == 10.0
+    # no printed total: fall back to rows plus charges
+    assert out["total"] == 31.5
+
+
 def test_normalize_output_shape_is_stable(normalize):
     """ReceiptTable reads these keys; adding is fine, removing is not."""
     out = normalize(QWEN_REPLY)
@@ -718,7 +758,9 @@ def test_preprocess_converts_any_mode_to_rgb(preprocess, mode):
 def test_prompt_names_every_field_of_the_target_schema(funcs_mod):
     """There is no fine-tune behind this schema. The prompt is the schema, so
     a field dropped from it is a field the model stops returning."""
-    for field in ("store", "date", "total", "items", "name", "qty", "price"):
+    for field in (
+        "store", "date", "total", "subtotal", "tax", "tip", "items", "name", "qty", "price",
+    ):
         assert field in funcs_mod.PROMPT, f"PROMPT no longer mentions {field!r}"
 
 
