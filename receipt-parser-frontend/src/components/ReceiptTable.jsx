@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 
 /**
  * Fully controlled: rows are rendered straight from `parsedData` and every
@@ -7,7 +7,16 @@ import React, { useMemo } from "react";
  * each keystroke round-tripped through the parent, and would fight any
  * normalization the parent applied.
  */
-const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
+const ReceiptTable = ({
+  parsedData = {},
+  onChange,
+  onRestore,
+  canRestore,
+  people = [],
+  onPeopleChange,
+}) => {
+  const [newPerson, setNewPerson] = useState("");
+
   // The parser has returned a bare array in some shapes; tolerate both.
   const items = useMemo(() => {
     if (Array.isArray(parsedData)) return parsedData;
@@ -29,7 +38,7 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
   };
 
   const handleAddRow = () => {
-    emit([...items, { name: "", qty: 1, price: 0, buyer: "" }]);
+    emit([...items, { name: "", qty: 1, price: 0, buyers: [] }]);
   };
 
   const handleRemoveRow = (index) => {
@@ -37,6 +46,60 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
   };
 
   const handleClear = () => emit([]);
+
+  /**
+   * Turn one "qty 3" row into three "qty 1" rows, so each can go to a
+   * different person. The amount is divided in whole cents and the remainder
+   * goes on the last row, so the rows still add up to exactly the original.
+   */
+  const handleSplitRow = (index) => {
+    const item = items[index];
+    const n = parseInt(item.qty) || 1;
+    if (n < 2) return;
+    const cents = Math.round((parseFloat(item.price) || 0) * 100);
+    const each = Math.trunc(cents / n);
+    const rows = Array.from({ length: n }, (_, k) => ({
+      ...item,
+      qty: 1,
+      price: (k === n - 1 ? cents - each * (n - 1) : each) / 100,
+    }));
+    emit([...items.slice(0, index), ...rows, ...items.slice(index + 1)]);
+  };
+
+  // --- People --------------------------------------------------------------
+  //
+  // The list of people lives in the parent so it survives a new parse. A row
+  // holds the names sharing it in `buyers`; a name no longer in `people` is
+  // ignored rather than trusted.
+
+  const buyersOf = (item) =>
+    Array.isArray(item.buyers) ? item.buyers.filter((b) => people.includes(b)) : [];
+
+  const handleAddPerson = () => {
+    const name = newPerson.trim();
+    setNewPerson("");
+    if (!name || !onPeopleChange) return;
+    if (people.some((p) => p.toLowerCase() === name.toLowerCase())) return;
+    onPeopleChange([...people, name]);
+  };
+
+  const handleRemovePerson = (name) => {
+    if (onPeopleChange) onPeopleChange(people.filter((p) => p !== name));
+  };
+
+  const toggleBuyer = (index, name) => {
+    const current = buyersOf(items[index]);
+    handleEdit(
+      index,
+      "buyers",
+      current.includes(name) ? current.filter((b) => b !== name) : [...current, name]
+    );
+  };
+
+  const toggleEveryone = (index) => {
+    const everyone = buyersOf(items[index]).length === people.length;
+    handleEdit(index, "buyers", everyone ? [] : [...people]);
+  };
 
   // --- Totals --------------------------------------------------------------
   //
@@ -52,14 +115,27 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
     [items]
   );
 
+  // A row shared by several people is split evenly between them. Listed in
+  // the order people were added, with anything unassigned last.
   const totalsByBuyer = useMemo(() => {
-    const map = {};
+    const map = new Map(people.map((p) => [p, 0]));
+    let unassigned = 0;
+    let anyUnassigned = false;
     for (const i of items) {
-      const buyer = i.buyer?.trim() || "Unassigned";
-      map[buyer] = (map[buyer] || 0) + lineTotal(i);
+      const sharing = Array.isArray(i.buyers)
+        ? i.buyers.filter((b) => map.has(b))
+        : [];
+      if (sharing.length === 0) {
+        unassigned += lineTotal(i);
+        anyUnassigned = true;
+        continue;
+      }
+      for (const b of sharing) map.set(b, map.get(b) + lineTotal(i) / sharing.length);
     }
-    return map;
-  }, [items]);
+    const rows = [...map.entries()];
+    if (anyUnassigned) rows.push(["Unassigned", unassigned]);
+    return rows;
+  }, [items, people]);
 
   // The total printed on the receipt itself, when the parser could read it.
   // A gap between that and the sum of the rows usually means a line was
@@ -92,6 +168,40 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
         </button>
       </div>
 
+      <div className="people">
+        <span className="people-label">People:</span>
+        {people.map((p) => (
+          <span key={p} className="chip chip--on chip--static">
+            {p}
+            <button
+              type="button"
+              className="chip-remove"
+              onClick={() => handleRemovePerson(p)}
+              aria-label={`Remove ${p}`}
+            >
+              ✕
+            </button>
+          </span>
+        ))}
+        <input
+          type="text"
+          className="people-input"
+          value={newPerson}
+          onChange={(e) => setNewPerson(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              handleAddPerson();
+            }
+          }}
+          placeholder="Add a name"
+          aria-label="Add a person"
+        />
+        <button type="button" className="btn" onClick={handleAddPerson}>
+          Add
+        </button>
+      </div>
+
       <div className="table-scroll">
         <table className="receipt-table">
           <thead>
@@ -99,7 +209,7 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
               <th>Name</th>
               <th>Qty</th>
               <th title="Total for this line, not the unit price">Amount ($)</th>
-              <th>Buyer</th>
+              <th title="Tap everyone sharing the item; it is split evenly">Who</th>
               <th aria-label="Remove row" />
             </tr>
           </thead>
@@ -140,16 +250,51 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
                     />
                   </td>
                   <td>
-                    <input
-                      type="text"
-                      className="cell-input"
-                      value={item.buyer || ""}
-                      onChange={(e) => handleEdit(i, "buyer", e.target.value)}
-                      placeholder="e.g. Alex"
-                      aria-label={`Item ${i + 1} buyer`}
-                    />
+                    <div className="chips">
+                      {people.length === 0 ? (
+                        <span className="chips-hint">Add people above</span>
+                      ) : (
+                        <>
+                          {people.map((p) => {
+                            const on = buyersOf(item).includes(p);
+                            return (
+                              <button
+                                type="button"
+                                key={p}
+                                className={on ? "chip chip--on" : "chip"}
+                                aria-pressed={on}
+                                onClick={() => toggleBuyer(i, p)}
+                              >
+                                {p}
+                              </button>
+                            );
+                          })}
+                          {people.length > 1 && (
+                            <button
+                              type="button"
+                              className="chip chip--all"
+                              onClick={() => toggleEveryone(i)}
+                              title="Split between everyone"
+                            >
+                              All
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </td>
-                  <td style={{ width: "1%" }}>
+                  <td className="row-actions">
+                    {(parseInt(item.qty) || 1) > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleSplitRow(i)}
+                        className="btn btn--icon"
+                        title={`Split into ${item.qty} separate rows`}
+                        aria-label={`Split ${item.name || `item ${i + 1}`} into ${item.qty} rows`}
+                      >
+                        ⑂
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => handleRemoveRow(i)}
@@ -190,7 +335,7 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
                   )}
                 </td>
               </tr>
-              {Object.entries(totalsByBuyer).map(([buyer, total]) => (
+              {totalsByBuyer.map(([buyer, total]) => (
                 <tr key={buyer}>
                   <td colSpan="5" className="buyer-row">
                     {buyer}: ${total.toFixed(2)}

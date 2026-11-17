@@ -234,7 +234,7 @@ a {
 .receipt-table {
   border-collapse: collapse;
   width: 100%;
-  min-width: 460px; /* below this the inputs collapse; scroll instead */
+  min-width: 560px; /* below this the inputs and chips collapse; scroll instead */
   border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
@@ -295,6 +295,93 @@ a {
 .buyer-row {
   padding-left: 16px;
   color: var(--text-muted);
+}
+
+/* --- People and buyer chips ---------------------------------------------- */
+
+.people {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.people-label {
+  color: var(--text-muted);
+}
+
+.people-input {
+  width: 9em;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chips-hint {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.chip--on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.chip--static {
+  cursor: default;
+}
+
+.chip--all {
+  border-style: dashed;
+}
+
+.chip-remove {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 0.7rem;
+  padding: 0;
+  cursor: pointer;
+}
+
+/* Keep the number columns narrow so the chips get the spare width. */
+.receipt-table th:nth-child(2) {
+  width: 4.5em;
+}
+
+.receipt-table th:nth-child(3) {
+  width: 7em;
+}
+
+.row-actions {
+  width: 1%;
+  white-space: nowrap;
 }
 
 .controls {
