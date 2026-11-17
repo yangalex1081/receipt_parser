@@ -163,12 +163,11 @@ def call_modal(
 ) -> tuple[str, dict]:
     """Score the deployed GPU function instead of the local copy.
 
-    `prompt` and `model` are accepted to match call_ollama's signature and then
-    ignored, because transcript_receipt takes only image bytes — the prompt is
-    funcs.PROMPT, baked in at deploy time. So this backend answers one question:
-    how well does what is *currently deployed* do on the labelled set? To score
-    a candidate prompt this way you would have to deploy it first, which is the
-    loop the local backend exists to avoid.
+    The prompt is sent with the image: transcript_receipt takes it as an
+    optional argument, so candidate prompts can be scored on the deployed
+    weights without redeploying for each one. `prompt=None` scores whatever
+    funcs.PROMPT was at deploy time. `model` is accepted to match call_ollama's
+    signature and ignored — the model is whichever one is deployed.
 
     Ollama's per-reply metadata has no equivalent here, so a truncated reply is
     not flagged. It shows up as a parse failure instead.
@@ -176,7 +175,13 @@ def call_modal(
     import modal
 
     fn = modal.Function.from_name(MODAL_APP, "transcript_receipt")
-    reply = fn.remote(image_bytes)
+    try:
+        reply = fn.remote(image_bytes, prompt) if prompt else fn.remote(image_bytes)
+    except TypeError as exc:
+        raise TypeError(
+            "the deployed transcript_receipt does not accept a prompt — the "
+            "build is stale; run `modal deploy backend/gateway.py`"
+        ) from exc
 
     if not isinstance(reply, str):
         raise TypeError(

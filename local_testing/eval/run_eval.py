@@ -5,14 +5,15 @@
     python local_testing/eval/run_eval.py -p v0_production   # one prompt
     python local_testing/eval/run_eval.py -c bar sample21    # one or more photos
     python local_testing/eval/run_eval.py -m qwen3-vl:8b     # a different local model
-    python local_testing/eval/run_eval.py --modal            # score the live deployment
+    python local_testing/eval/run_eval.py --modal            # score the deployed prompt on Modal
+    python local_testing/eval/run_eval.py --modal -p v4_row_fidelity   # a candidate, on Modal
 
 Needs `ollama serve` running and the model pulled, except under --modal.
 
---modal scores the deployed transcript_receipt over the same labelled set. It
-costs real GPU time and it cannot sweep prompts — the deployed function takes
-only image bytes, so the prompt is whatever was baked in at deploy time. Use it
-to confirm a winner after deploying it, not to pick one.
+--modal runs the deployed transcript_receipt over the same labelled set, which
+costs real GPU time. On its own it scores the deployed prompt. With -p it sends
+the named prompts with each image instead, so candidates can be compared on the
+production weights and GPU without a redeploy per prompt.
 """
 
 from __future__ import annotations
@@ -70,7 +71,8 @@ def main():
     ap.add_argument(
         "--modal",
         action="store_true",
-        help="score the deployed transcript_receipt instead of Ollama (costs GPU)",
+        help="run on the deployed transcript_receipt instead of Ollama (costs GPU); "
+        "with -p, sweeps those prompts there",
     )
     args = ap.parse_args()
 
@@ -81,15 +83,18 @@ def main():
     caller = call_modal if args.modal else call_ollama
 
     if args.modal:
-        # The deployed function has no prompt parameter, so there is exactly one
-        # thing to score and -p cannot change it. Say so rather than silently
-        # running the sweep and reporting the same number under five names.
-        if args.prompts:
-            print("note: --modal ignores -p; the deployed prompt is the only one\n")
         import funcs  # noqa: PLC0415 - harness has already put backend/ on the path
         from harness import MODAL_APP
 
-        prompts = {"deployed": funcs.PROMPT}
+        if args.prompts:
+            # Sent with each image, so these are scored on the deployed weights.
+            prompts = load_prompts(args.prompts)
+            if not prompts:
+                raise SystemExit("no prompts matched")
+        else:
+            # None means "whatever was baked in at deploy time". A full sweep is
+            # opt-in via -p because every prompt costs a GPU pass over the set.
+            prompts = {"deployed": None}
         label = f"{MODAL_APP} on Modal ({funcs.MODEL_NAME})"
     else:
         prompts = load_prompts(args.prompts)
