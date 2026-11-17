@@ -738,6 +738,16 @@ def test_prompt_excludes_summary_rows_and_code_fences(funcs_mod):
         assert row in prompt
 
 
+def test_transcript_takes_an_optional_prompt(funcs_mod):
+    """The eval harness sweeps prompts on the deployment by passing one in.
+    It must stay optional: process_receipt calls this with the image alone."""
+    import inspect
+
+    params = inspect.signature(funcs_mod.transcript_receipt.get_raw_f()).parameters
+    assert list(params) == ["image_bytes", "prompt"]
+    assert params["prompt"].default is None
+
+
 def test_image_patch_size_matches_qwen3(funcs_mod):
     """qwen_vl_utils defaults image_patch_size to 14 — Qwen2-VL's value.
     Qwen3-VL uses 16, and the default would resize off the token grid."""

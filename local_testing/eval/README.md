@@ -39,9 +39,17 @@ This swaps Ollama for the deployed `transcript_receipt` and scores the same
 labelled set, so you can confirm that a prompt which won locally also wins on
 the real weights.
 
-It cannot sweep prompts. `transcript_receipt` takes only image bytes — the
-prompt is `funcs.PROMPT`, baked in at deploy time — so `--modal` scores exactly
-one thing and ignores `-p`. Pick a winner locally, deploy it, then confirm here.
+On its own it scores the deployed prompt. To compare candidates on Modal, name
+them:
+
+```bash
+../../venv/bin/python run_eval.py --modal -p v0_production v4_row_fidelity
+```
+
+`transcript_receipt` takes the prompt as an optional argument, so each named
+prompt is sent with the image and no redeploy is needed per candidate. A sweep
+on an L4 takes seconds per receipt rather than the ~40s the local model needs.
+The deployed build must include that argument — redeploy once if it predates it.
 
 One difference from the local path: `prepare_image` skips its MAX_PIXELS
 downsample under `--modal`, because the deployed processor applies that itself

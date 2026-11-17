@@ -132,8 +132,13 @@ def preprocess_image(image_bytes: bytes) -> bytes:
     retries=3,
     volumes={MODEL_CACHE_PATH: model_cache},
 )
-def transcript_receipt(image_bytes: bytes) -> str:
+def transcript_receipt(image_bytes: bytes, prompt: str | None = None) -> str:
     """Run the VLM over one receipt and return its raw reply.
+
+    `prompt` overrides PROMPT for this call. Production never passes it; it
+    exists so the eval harness can score candidate prompts against the deployed
+    weights without a redeploy per candidate. This function has no web route,
+    so only someone with access to the Modal workspace can supply one.
 
     The reply is a string, not a dict: it is whatever the model generated, and
     parsing it is normalize_output's job. Keeping the split means a malformed
@@ -149,7 +154,7 @@ def transcript_receipt(image_bytes: bytes) -> str:
             "role": "user",
             "content": [
                 {"type": "image", "image": image, "max_pixels": MAX_PIXELS},
-                {"type": "text", "text": PROMPT},
+                {"type": "text", "text": prompt or PROMPT},
             ],
         }
     ]
