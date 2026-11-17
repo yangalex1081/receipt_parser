@@ -11,6 +11,10 @@ const App = () => {
   // The untouched parser output, so edits can be discarded.
   const [lastParsed, setLastParsed] = useState(null);
 
+  // Who is splitting the bill. Kept here rather than in the receipt so the
+  // names survive parsing a second receipt for the same group.
+  const [people, setPeople] = useState([]);
+
   const handleParsed = (data) => {
     setParsedData(data);
     setLastParsed(data);
@@ -38,6 +42,8 @@ const App = () => {
             onChange={setParsedData}
             onRestore={handleRestore}
             canRestore={lastParsed !== null && parsedData !== lastParsed}
+            people={people}
+            onPeopleChange={setPeople}
           />
         </div>
       </div>
