@@ -40,9 +40,9 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
 
   // --- Totals --------------------------------------------------------------
   //
-  // `price` is the LINE TOTAL for a row, not a unit price — that is the CORD
-  // schema the model is fine-tuned on ("MUFFIN, cnt 3, price 9000" is 9000 for
-  // all three). So totals sum price directly; multiplying by qty would count
+  // `price` is the LINE TOTAL for a row, not a unit price — that is what the
+  // backend prompt asks the model for ("3 COFFEE @ 2.50   7.50" is qty 3,
+  // price 7.50). So totals sum price directly; multiplying by qty would count
   // quantity twice. `qty` is informational, and unit price is price / qty.
 
   const lineTotal = (i) => parseFloat(i.price) || 0;

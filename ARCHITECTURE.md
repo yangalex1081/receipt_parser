@@ -318,19 +318,19 @@ bundle. CORS was the only real control, and CORS is enforced by browsers only.
 
 ## 6. Local development
 
-`/api/*` exists only inside Netlify's proxy, so plain `npm run dev` cannot reach
-the backend. Use the Netlify CLI:
+In production `/api/*` exists only inside Netlify's proxy. Locally the Vite dev
+server stands in for it: `vite.config.js` proxies `/api/*` to Modal and signs
+each request with the same HS256 JWS Netlify would attach, so `npm run dev`
+exercises the real backend with no bypass in the gateway.
 
 ```bash
-npm install -g netlify-cli
 cd receipt-parser-frontend
-netlify dev            # applies netlify.toml redirects, loads env vars
+cp .env.example .env     # set NETLIFY_SIGN_SECRET to the shared value
+npm run dev              # http://localhost:3000
 ```
 
-> **Unverified:** Netlify's docs confirm `netlify dev` applies redirect rules and
-> loads env vars for all scopes locally, but do not state whether the `signed`
-> property is applied. If local requests come back `401`, signing is not being
-> applied locally and a dev-only bypass in the gateway will be needed.
+The secret is read by the dev server (Node) only. It has no `VITE_` prefix, so
+it is never inlined into the bundle.
 
 Backend tests run without network access by stubbing `modal` — see §8.
 
@@ -424,12 +424,6 @@ appended and edited, but per-row delete now exists, so removing a middle row
 shifts every later key. Inputs are fully controlled so values stay correct — it
 is latent, not live. A stable per-row id would settle it, which means deciding
 whether that id rides along in the payload sent back to the server.
-
-**Vestigial root package.** The repo root has a `package.json` (axios plus vite
-scripts, but no vite dependency) and its own `node_modules`, left from before the
-frontend moved into `receipt-parser-frontend/`. Netlify builds from the
-subdirectory, so it is unused — but it produces a second lockfile and invites
-confusion about which directory to run npm in.
 
 **Unverified rendering.** The theme tokens compile and no component hardcodes a
 colour, but the dark-mode contrast and the sub-900px layout have not been looked
