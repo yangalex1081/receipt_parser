@@ -297,6 +297,11 @@ a {
   color: var(--text-muted);
 }
 
+.receipt-meta {
+  margin: -6px 0 12px;
+  color: var(--text-muted);
+}
+
 .controls {
   display: flex;
   gap: 8px;

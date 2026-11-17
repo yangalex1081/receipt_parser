@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 
 /**
  * Fully controlled: rows are rendered straight from `parsedData` and every
@@ -69,11 +69,38 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
   const difference = hasPrintedTotal ? printedTotal - totalAmount : 0;
   const totalsDisagree = hasPrintedTotal && Math.abs(difference) > 0.005;
 
+  // --- Header and summary --------------------------------------------------
+
+  const store = Array.isArray(parsedData) ? "" : (parsedData?.store || "").trim();
+  const date = Array.isArray(parsedData) ? "" : (parsedData?.date || "").trim();
+  const heading = [store, date].filter(Boolean).join(" · ");
+
+  const [copied, setCopied] = useState(false);
+
+  /** Plain text for pasting into a group chat. */
+  const handleCopySummary = async () => {
+    const lines = [
+      heading || "Receipt",
+      ...Object.entries(totalsByBuyer).map(
+        ([buyer, total]) => `${buyer}: $${total.toFixed(2)}`
+      ),
+      `Total: $${totalAmount.toFixed(2)}`,
+    ];
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard access denied or unavailable; the totals are on screen.
+    }
+  };
+
   // --- Rendering -----------------------------------------------------------
 
   return (
     <div>
       <h2>Receipt Items</h2>
+      {heading && <p className="receipt-meta">{heading}</p>}
 
       <div className="controls">
         {canRestore && (
@@ -90,6 +117,12 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
         <button type="button" onClick={handleClear} className="btn btn--danger">
           ♻️ Clear
         </button>
+
+        {items.length > 0 && (
+          <button type="button" onClick={handleCopySummary} className="btn">
+            {copied ? "✓ Copied" : "📋 Copy summary"}
+          </button>
+        )}
       </div>
 
       <div className="table-scroll">
