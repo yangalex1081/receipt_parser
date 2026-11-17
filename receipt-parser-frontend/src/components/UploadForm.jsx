@@ -60,7 +60,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const UploadForm = ({ onParsed }) => {
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
-  const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
@@ -81,7 +80,6 @@ const UploadForm = ({ onParsed }) => {
 
     setFile(selectedFile);
     setPreview(URL.createObjectURL(selectedFile));
-    setResult(null);
     setError("");
     setStatus("");
   };
@@ -90,7 +88,6 @@ const UploadForm = ({ onParsed }) => {
     cancelledRef.current = true;
     setFile(null);
     setPreview(null);
-    setResult(null);
     setError("");
     setStatus("");
     setLoading(false);
@@ -135,7 +132,6 @@ const UploadForm = ({ onParsed }) => {
 
     cancelledRef.current = false;
     setLoading(true);
-    setResult(null);
     setError("");
     setStatus("Preparing image…");
 
@@ -153,7 +149,6 @@ const UploadForm = ({ onParsed }) => {
       const parsed = await pollForResult(data.call_id);
       if (cancelledRef.current || parsed == null) return;
 
-      setResult(parsed);
       setStatus("");
       if (onParsed) onParsed(parsed);
     } catch (err) {
@@ -217,12 +212,6 @@ const UploadForm = ({ onParsed }) => {
         </p>
       )}
 
-      {result && (
-        <div className="output">
-          <h3>Parsed output</h3>
-          <pre>{JSON.stringify(result, null, 2)}</pre>
-        </div>
-      )}
     </div>
   );
 };
