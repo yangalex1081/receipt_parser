@@ -69,11 +69,11 @@ sequenceDiagram
     G->>W: process_receipt.spawn(bytes)
     G-->>B: 200 {status:"pending", call_id:"fc-..."}
 
-    loop every 1.5-3s until done
-        B->>N: GET /api/result/{call_id}
+    loop long poll, up to 15s each, until done
+        B->>N: GET /api/result/{call_id}?wait=15
         N->>N: rate limit (120/min/IP), sign
         N->>G: GET /result/{call_id} + x-nf-sign
-        G->>W: FunctionCall.from_id(id).get(timeout=0)
+        G->>W: FunctionCall.from_id(id).get(timeout=wait)
         alt still running
             G-->>B: {status:"pending"}
         else finished
@@ -124,8 +124,11 @@ binary is base64-encoded. Phone photos routinely exceed that, so `UploadForm`
 re-encodes to at most 1600px on the long edge at JPEG q=0.85 before upload.
 Images already under 2MB with no resize needed are passed through untouched.
 
-**Polling.** Starts at 1.5s, backs off ×1.3 to a 3s ceiling, gives up at 150s.
-A `cancelledRef` stops the loop on reset or unmount so no orphaned poll survives.
+**Polling.** Long polls: each `GET /api/result/{id}?wait=15` is held open by the
+gateway until the job finishes or 15s pass, so a result arrives the moment it is
+ready and a cold start costs a handful of requests rather than ~22. Gives up at
+150s. Each upload gets a run id; reset, unmount and a new submit all bump it,
+and a loop whose id is no longer current stops and discards its result.
 
 ### 3.2 Netlify edge — `receipt-parser-frontend/netlify.toml`
 
@@ -171,7 +174,7 @@ on the same app, so `modal deploy backend/gateway.py` covers everything.
 |---|---|---|
 | `GET /health` | public | Uptime probe |
 | `POST /parse` | signed | Validate image, `spawn()` job, return `call_id` |
-| `GET /result/{call_id}` | signed | Poll — `pending` / `done` / `410 expired` |
+| `GET /result/{call_id}?wait=N` | signed | Long poll (N ≤ 20s) — `pending` / `done` / `410 expired` |
 
 `verify_netlify_signature` is a **FastAPI dependency**, not an HTTP middleware.
 This is deliberate: `HTTPException` raised inside a middleware bypasses FastAPI's

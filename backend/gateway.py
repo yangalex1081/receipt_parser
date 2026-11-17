@@ -98,16 +98,31 @@ async def parse_receipt(
     return {"status": "pending", "call_id": call.object_id}
 
 
+# The longest one poll will wait for a result. Netlify's proxy gives up at 26s,
+# so this has to stay comfortably under that.
+MAX_RESULT_WAIT = 20
+
+
 # Poll for a spawned job. Results are retained by Modal for 7 days.
+#
+# `wait` turns this into a long poll: the request is held open for up to that
+# many seconds and answers the moment the job finishes, so the browser makes a
+# handful of requests instead of one every couple of seconds and sees the
+# result with no polling delay.
+#
+# Deliberately a plain `def`: FunctionCall.get() blocks, and FastAPI runs sync
+# handlers in a thread pool. As an `async def` it would block the event loop —
+# and every other request — for the whole wait.
 @web_app.get("/result/{call_id}")
-async def get_result(
+def get_result(
     call_id: str,
+    wait: float = 0,
     _claims: dict = Depends(verify_netlify_signature),
 ):
     function_call = modal.FunctionCall.from_id(call_id)
 
     try:
-        result = function_call.get(timeout=0)
+        result = function_call.get(timeout=max(0.0, min(wait, MAX_RESULT_WAIT)))
     except TimeoutError:
         return {"status": "pending", "call_id": call_id}
     except modal.exception.OutputExpiredError:

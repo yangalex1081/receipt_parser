@@ -10,8 +10,12 @@ const API_BASE = "/api";
 const MAX_DIMENSION = 1600;
 const JPEG_QUALITY = 0.85;
 
-const POLL_START_MS = 1500;
-const POLL_MAX_MS = 3000;
+// Each poll is held open by the server until the job finishes or this many
+// seconds pass. Must stay under the gateway's MAX_RESULT_WAIT (20s).
+const POLL_WAIT_S = 15;
+// If a "pending" comes back faster than this, the server is not long-polling
+// (an older gateway, say) — pause before asking again rather than hammering it.
+const POLL_MIN_INTERVAL_MS = 1500;
 const POLL_TIMEOUT_MS = 150000; // cold start measured at ~66s; leave headroom
 
 /** Downscale to at most MAX_DIMENSION on the long edge and re-encode as JPEG. */
@@ -65,9 +69,14 @@ const UploadForm = ({ onParsed }) => {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
 
-  // Lets an in-flight poll loop know it should stop (reset, or unmount).
-  const cancelledRef = useRef(false);
-  useEffect(() => () => { cancelledRef.current = true; }, []);
+  // Identifies the current upload. Reset, unmount and every new submit bump
+  // it, and a poll loop stops as soon as its own id is no longer current. A
+  // shared "cancelled" flag is not enough: reset sets it, the next submit
+  // clears it, and the previous loop — still mid-request — carries on and
+  // delivers the old receipt's result over the new one.
+  const inputRef = useRef(null);
+  const runIdRef = useRef(0);
+  useEffect(() => () => { runIdRef.current += 1; }, []);
 
   // Revoke the previous object URL whenever it is replaced or unmounted.
   useEffect(() => {
@@ -87,7 +96,10 @@ const UploadForm = ({ onParsed }) => {
   };
 
   const handleReset = () => {
-    cancelledRef.current = true;
+    runIdRef.current += 1;
+    // Clear the input itself too: otherwise choosing the same photo again
+    // fires no change event and the form looks dead.
+    if (inputRef.current) inputRef.current.value = "";
     setFile(null);
     setPreview(null);
     setResult(null);
@@ -97,43 +109,57 @@ const UploadForm = ({ onParsed }) => {
   };
 
   /** Poll /api/result/:id until the job finishes, fails, or we give up. */
-  const pollForResult = async (callId) => {
+  const pollForResult = async (callId, isCurrent) => {
     const startedAt = Date.now();
-    let delay = POLL_START_MS;
 
-    while (!cancelledRef.current) {
-      if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
-        throw new Error("Timed out waiting for the parser. Please try again.");
-      }
-
-      await sleep(delay);
-      delay = Math.min(delay * 1.3, POLL_MAX_MS);
-
+    // The elapsed counter ticks on its own timer: a long poll can sit for 15s
+    // without returning, and the status line should not freeze meanwhile.
+    const showElapsed = () => {
+      if (!isCurrent()) return;
       const elapsed = Math.round((Date.now() - startedAt) / 1000);
       setStatus(`Parsing… ${elapsed}s (first run of the day can take ~60s)`);
+    };
+    showElapsed();
+    const ticker = setInterval(showElapsed, 1000);
 
-      let res;
-      try {
-        res = await axios.get(`${API_BASE}/result/${callId}`);
-      } catch (err) {
-        const code = err?.response?.status;
-        if (code === 410) throw new Error("That result expired. Please upload again.");
-        if (code === 429) throw new Error("Too many requests — wait a minute and retry.");
-        if (code === 500) throw new Error("The parser failed on this image.");
-        throw err;
+    try {
+      while (isCurrent()) {
+        if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
+          throw new Error("Timed out waiting for the parser. Please try again.");
+        }
+
+        const askedAt = Date.now();
+        let res;
+        try {
+          res = await axios.get(`${API_BASE}/result/${callId}`, {
+            params: { wait: POLL_WAIT_S },
+          });
+        } catch (err) {
+          const code = err?.response?.status;
+          if (code === 410) throw new Error("That result expired. Please upload again.");
+          if (code === 429) throw new Error("Too many requests — wait a minute and retry.");
+          if (code === 500) throw new Error("The parser failed on this image.");
+          throw err;
+        }
+
+        if (res.data?.status === "done") return res.data.result;
+
+        const took = Date.now() - askedAt;
+        if (took < POLL_MIN_INTERVAL_MS) await sleep(POLL_MIN_INTERVAL_MS - took);
       }
-
-      if (res.data?.status === "done") return res.data.result;
+    } finally {
+      clearInterval(ticker);
     }
 
-    return null; // cancelled
+    return null; // superseded
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!file || loading) return;
 
-    cancelledRef.current = false;
+    const runId = ++runIdRef.current;
+    const isCurrent = () => runIdRef.current === runId;
     setLoading(true);
     setResult(null);
     setError("");
@@ -141,6 +167,7 @@ const UploadForm = ({ onParsed }) => {
 
     try {
       const upload = await downscaleImage(file);
+      if (!isCurrent()) return;
 
       const formData = new FormData();
       formData.append("file", upload);
@@ -148,15 +175,17 @@ const UploadForm = ({ onParsed }) => {
       setStatus("Uploading…");
       const { data } = await axios.post(`${API_BASE}/parse`, formData);
 
+      if (!isCurrent()) return;
       if (!data?.call_id) throw new Error("Server did not return a job id.");
 
-      const parsed = await pollForResult(data.call_id);
-      if (cancelledRef.current || parsed == null) return;
+      const parsed = await pollForResult(data.call_id, isCurrent);
+      if (!isCurrent() || parsed == null) return;
 
       setResult(parsed);
       setStatus("");
       if (onParsed) onParsed(parsed);
     } catch (err) {
+      if (!isCurrent()) return; // a superseded run must not report over the new one
       const code = err?.response?.status;
       if (code === 429) {
         setError("Too many uploads — please wait a minute and try again.");
@@ -169,7 +198,8 @@ const UploadForm = ({ onParsed }) => {
       }
       setStatus("");
     } finally {
-      setLoading(false);
+      // Only the current run owns the loading flag; reset clears it itself.
+      if (isCurrent()) setLoading(false);
     }
   };
 
@@ -180,6 +210,7 @@ const UploadForm = ({ onParsed }) => {
       <form onSubmit={handleSubmit}>
         <input
           type="file"
+          ref={inputRef}
           accept="image/*"
           onChange={handleFileChange}
           disabled={loading}

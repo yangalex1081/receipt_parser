@@ -113,6 +113,7 @@ class FakeFunctionCall:
     """Drives /result through its four outcomes via `mode`."""
 
     mode = "pending"
+    timeouts = []  # the timeout each get() was called with
 
     def __init__(self, call_id):
         self.call_id = call_id
@@ -122,6 +123,7 @@ class FakeFunctionCall:
         return cls(call_id)
 
     def get(self, timeout=0):
+        FakeFunctionCall.timeouts.append(timeout)
         if FakeFunctionCall.mode == "pending":
             raise TimeoutError()
         if FakeFunctionCall.mode == "expired":
@@ -147,6 +149,7 @@ def gw(monkeypatch):
     monkeypatch.setattr(gateway.modal, "FunctionCall", FakeFunctionCall)
     monkeypatch.setattr(gateway, "NETLIFY_SIGN_SECRET", TEST_SECRET)
     FakeFunctionCall.mode = "pending"
+    FakeFunctionCall.timeouts = []
     return gateway
 
 
@@ -302,6 +305,28 @@ def test_result_pending(client, sign):
     r = client.get("/result/fc-TEST123", headers=sign())
     assert r.status_code == 200
     assert r.json()["status"] == "pending"
+
+
+def test_result_does_not_wait_unless_asked(client, sign):
+    client.get("/result/fc-TEST123", headers=sign())
+    assert FakeFunctionCall.timeouts == [0]
+
+
+def test_result_long_polls_when_asked(client, sign):
+    """?wait=N holds the request open for the result instead of making the
+    browser ask again every couple of seconds."""
+    r = client.get("/result/fc-TEST123?wait=15", headers=sign())
+    assert r.json()["status"] == "pending"
+    assert FakeFunctionCall.timeouts == [15]
+
+
+@pytest.mark.parametrize("asked, used", [("500", 20), ("-3", 0)])
+def test_result_wait_is_clamped_below_the_proxy_timeout(client, gw, sign, asked, used):
+    """Netlify drops the connection at 26s; a longer wait would surface as a
+    gateway timeout instead of a clean 'pending'."""
+    client.get(f"/result/fc-TEST123?wait={asked}", headers=sign())
+    assert FakeFunctionCall.timeouts == [used]
+    assert gw.MAX_RESULT_WAIT < 26
 
 
 def test_result_done_returns_payload(client, sign):
