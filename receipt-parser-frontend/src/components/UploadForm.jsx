@@ -12,7 +12,9 @@ const JPEG_QUALITY = 0.85;
 
 const POLL_START_MS = 1500;
 const POLL_MAX_MS = 3000;
-const POLL_TIMEOUT_MS = 150000; // cold start measured at ~66s; leave headroom
+// Cold start measured at ~66s, and a 60+ row receipt can generate for a couple
+// of minutes on top of that.
+const POLL_TIMEOUT_MS = 300000;
 
 /** Downscale to at most MAX_DIMENSION on the long edge and re-encode as JPEG. */
 const downscaleImage = (file) =>

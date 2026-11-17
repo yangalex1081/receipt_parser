@@ -92,6 +92,13 @@ const ReceiptTable = ({ parsedData = {}, onChange, onRestore, canRestore }) => {
         </button>
       </div>
 
+      {!Array.isArray(parsedData) && parsedData?.truncated && (
+        <p className="error-line" role="alert">
+          ⚠ This receipt was too long to read in one pass — the last rows are
+          missing. Add them by hand, or photograph it in two halves.
+        </p>
+      )}
+
       <div className="table-scroll">
         <table className="receipt-table">
           <thead>

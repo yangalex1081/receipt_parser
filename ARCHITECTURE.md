@@ -416,7 +416,7 @@ HK and US phone photos is the open work.
 **Timings in §2 predate the swap.** They were measured with Donut's ~800MB of
 weights. Qwen3-VL-4B is ~8GB at bf16, so cold start will be materially longer
 (the Modal Volume cache absorbs the download, not the load), and a warm parse
-now includes generating up to 1024 decoder tokens. The numbers in that table
+now includes generating up to 2560 decoder tokens. The numbers in that table
 need re-measuring before they mean anything.
 
 **Row keys.** `ReceiptTable` keys rows by array index. Safe while rows are only
